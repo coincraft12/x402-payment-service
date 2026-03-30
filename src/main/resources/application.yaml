@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: x402-payment-lab
+  datasource:
+    url: jdbc:h2:mem:x402lab
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+x402:
+  policy:
+    max-amount: ${X402_POLICY_MAX_AMOUNT:10000}
+    allowed-merchants: ${X402_ALLOWED_MERCHANTS:demo-merchant,lab-merchant}
+  challenge:
+    report:
+      merchant-id: ${X402_CHALLENGE_REPORT_MERCHANT_ID:demo-merchant}
+      endpoint: ${X402_CHALLENGE_REPORT_ENDPOINT:/x402/protected/report}
+      asset: ${X402_CHALLENGE_REPORT_ASSET:USDC}
+      amount: ${X402_CHALLENGE_REPORT_AMOUNT:1000}
+      payee: ${X402_CHALLENGE_REPORT_PAYEE:merchant-vault}
