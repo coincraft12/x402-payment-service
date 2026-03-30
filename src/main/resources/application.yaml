@@ -2,21 +2,21 @@ spring:
   application:
     name: x402-payment-service
   datasource:
-    url: jdbc:h2:mem:x402service
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
-  h2:
-    console:
-      enabled: true
-      path: /h2
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/x402}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:x402}
+    password: ${DB_PASSWORD:x402}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 30000
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: ${JPA_DDL_AUTO:validate}
     show-sql: false
     properties:
       hibernate:
         format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
 
 x402:
   eip3009:
