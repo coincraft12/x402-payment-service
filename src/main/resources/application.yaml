@@ -1,8 +1,8 @@
 spring:
   application:
-    name: x402-payment-lab
+    name: x402-payment-service
   datasource:
-    url: jdbc:h2:mem:x402lab
+    url: jdbc:h2:mem:x402service
     driver-class-name: org.h2.Driver
     username: sa
     password:
