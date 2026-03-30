@@ -30,7 +30,7 @@ public class X402ProtectedResourceController {
                     intent.getId(), payer, intent.getStatus());
             PaymentChallengeResponse challenge = challengeService.toChallenge(intent);
             return ResponseEntity.status(HttpStatusCode.valueOf(402))
-                    .header("X-Payment-Protocol", "x402-lab")
+                    .header("X-Payment-Protocol", "x402/1")
                     .header("X-Payment-Required", "true")
                     .header("X-Payment-Intent-Id", intent.getId().toString())
                     .header("X-Payment-Merchant", intent.getMerchantId())
