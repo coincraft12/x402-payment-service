@@ -7,6 +7,6 @@ import java.util.UUID;
 
 public interface PaymentAuthorizationRepository extends JpaRepository<PaymentAuthorization, UUID> {
     boolean existsByDigest(String digest);
-    boolean existsByPayerAndNonce(String payer, long nonce);
+    boolean existsByPayerAndNonce(String payer, String nonce);
     List<PaymentAuthorization> findByPaymentIntentIdOrderByCreatedAtAsc(UUID paymentIntentId);
 }

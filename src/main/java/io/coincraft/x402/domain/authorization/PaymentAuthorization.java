@@ -3,6 +3,7 @@ package io.coincraft.x402.domain.authorization;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.math.BigInteger;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -26,21 +27,35 @@ public class PaymentAuthorization {
     @Column(nullable = false)
     private UUID paymentIntentId;
 
-    @Column(nullable = false, length = 128)
+    /** payer Ethereum address (0x...) */
+    @Column(nullable = false, length = 42)
     private String payer;
 
-    @Column(nullable = false, length = 128)
+    /** payee Ethereum address (0x...) */
+    @Column(nullable = false, length = 42)
     private String payee;
 
-    @Column(nullable = false)
-    private long nonce;
+    /** EIP-3009 token transfer amount */
+    @Column(name = "transfer_value", nullable = false)
+    private BigInteger value;
 
+    /** unix timestamp (seconds) — 서명 유효 시작 */
     @Column(nullable = false)
-    private Instant deadline;
+    private long validAfter;
 
-    @Column(nullable = false, length = 128)
+    /** unix timestamp (seconds) — 서명 만료 */
+    @Column(nullable = false)
+    private long validBefore;
+
+    /** EIP-3009 bytes32 nonce (hex, without 0x) */
+    @Column(nullable = false, length = 64)
+    private String nonce;
+
+    /** EIP-712 digest of the authorization (hex) */
+    @Column(nullable = false, length = 64)
     private String digest;
 
+    /** raw signature (v|r|s JSON 직렬화) */
     @Column(nullable = false, length = 512)
     private String signature;
 
@@ -61,8 +76,10 @@ public class PaymentAuthorization {
             UUID paymentIntentId,
             String payer,
             String payee,
-            long nonce,
-            Instant deadline,
+            BigInteger value,
+            long validAfter,
+            long validBefore,
+            String nonce,
             String digest,
             String signature
     ) {
@@ -71,8 +88,10 @@ public class PaymentAuthorization {
                 .paymentIntentId(paymentIntentId)
                 .payer(payer)
                 .payee(payee)
+                .value(value)
+                .validAfter(validAfter)
+                .validBefore(validBefore)
                 .nonce(nonce)
-                .deadline(deadline)
                 .digest(digest)
                 .signature(signature)
                 .status(PaymentAuthorizationStatus.PA0_ISSUED)

@@ -2,6 +2,8 @@ package io.coincraft.x402;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.coincraft.x402.support.Eip3009Verifier;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,7 +12,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.web3j.crypto.ECKeyPair;
+import org.web3j.crypto.Keys;
+import org.web3j.crypto.Sign;
 
+import java.math.BigInteger;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,11 +29,85 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class READMEExamplesIntegrationTest {
 
+    /** 테스트 전용 고정 private key (절대 실제 환경에 사용 금지) */
+    private static final String TEST_PRIVATE_KEY =
+            "4c0883a69102937d6231471b5dbb6e538eba2ef2d28aa3e45bed14d0a37f52ea";
+
+    private static ECKeyPair testKeyPair;
+    private static String testFromAddress;
+    private static final String TEST_TO_ADDRESS = "0x000000000000000000000000000000000000dead";
+
     @Autowired
     private MockMvc mockMvc;
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private Eip3009Verifier eip3009Verifier;
+
+    @BeforeAll
+    static void setupKeyPair() {
+        testKeyPair = ECKeyPair.create(new BigInteger(TEST_PRIVATE_KEY, 16));
+        testFromAddress = "0x" + Keys.getAddress(testKeyPair);
+    }
+
+    // ── EIP-3009 서명 헬퍼 ──────────────────────────────────────────────────
+
+    /**
+     * 테스트용 AuthorizePaymentRequest JSON 생성.
+     * Eip3009Verifier.digest()로 EIP-712 hash 계산 후 testKeyPair로 서명.
+     */
+    private String buildAuthRequestJson(long value, long validBefore, String nonceHex) throws Exception {
+        io.coincraft.x402.api.AuthorizePaymentRequest tempReq = new io.coincraft.x402.api.AuthorizePaymentRequest(
+                testFromAddress,
+                TEST_TO_ADDRESS,
+                BigInteger.valueOf(value),
+                0L,
+                validBefore,
+                nonceHex,
+                27, "0x" + "00".repeat(32), "0x" + "00".repeat(32)
+        );
+
+        String digestHex = eip3009Verifier.digest(tempReq);
+        byte[] digestBytes = hexToBytes(digestHex);
+
+        Sign.SignatureData sig = Sign.signMessage(digestBytes, testKeyPair, false);
+
+        int v = sig.getV()[0] & 0xFF;
+        String r = "0x" + bytesToHex(sig.getR());
+        String s = "0x" + bytesToHex(sig.getS());
+
+        return """
+                {
+                  "from": "%s",
+                  "to": "%s",
+                  "value": %d,
+                  "validAfter": 0,
+                  "validBefore": %d,
+                  "nonce": "%s",
+                  "v": %d,
+                  "r": "%s",
+                  "s": "%s"
+                }
+                """.formatted(testFromAddress, TEST_TO_ADDRESS, value, validBefore, nonceHex, v, r, s);
+    }
+
+    private static String randomNonce() {
+        UUID uuid = UUID.randomUUID();
+        return "0x" + String.format("%032x", uuid.getMostSignificantBits()) +
+               String.format("%032x", uuid.getLeastSignificantBits());
+    }
+
+    private static long futureDeadline() {
+        return java.time.Instant.parse("2026-12-31T23:59:59Z").getEpochSecond();
+    }
+
+    private static long pastDeadline() {
+        return java.time.Instant.parse("2024-01-01T00:00:00Z").getEpochSecond();
+    }
+
+    // ── 테스트 ───────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("README - Payment Intent 직접 생성 예제")
@@ -54,13 +134,7 @@ class READMEExamplesIntegrationTest {
 
         JsonNode authorization = postJson(
                 "/x402/payment-intents/" + paymentIntentId + "/authorize",
-                """
-                {
-                  "nonce": 1,
-                  "deadline": "2026-12-31T23:59:59Z",
-                  "signature": "demo-signature"
-                }
-                """,
+                buildAuthRequestJson(1000, futureDeadline(), randomNonce()),
                 null
         );
 
@@ -158,28 +232,14 @@ class READMEExamplesIntegrationTest {
     @DisplayName("README - 실패 시나리오 예제 3. Authorization replay")
     void readme_failureExample_authorizationReplay() throws Exception {
         String paymentIntentId = createReadmeStyleIntent("readme-replay-" + UUID.randomUUID());
+        String nonce = randomNonce();
+        String authBody = buildAuthRequestJson(1000, futureDeadline(), nonce);
 
-        postJson(
-                "/x402/payment-intents/" + paymentIntentId + "/authorize",
-                """
-                {
-                  "nonce": 7,
-                  "deadline": "2026-12-31T23:59:59Z",
-                  "signature": "demo-signature"
-                }
-                """,
-                null
-        );
+        postJson("/x402/payment-intents/" + paymentIntentId + "/authorize", authBody, null);
 
         mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "nonce": 7,
-                                  "deadline": "2026-12-31T23:59:59Z",
-                                  "signature": "demo-signature"
-                                }
-                                """))
+                        .content(authBody))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("AUTHORIZATION_REPLAY_BLOCKED"));
     }
@@ -191,13 +251,7 @@ class READMEExamplesIntegrationTest {
 
         mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "nonce": 99,
-                                  "deadline": "2024-01-01T00:00:00Z",
-                                  "signature": "expired-signature"
-                                }
-                                """))
+                        .content(buildAuthRequestJson(1000, pastDeadline(), randomNonce())))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("AUTHORIZATION_EXPIRED"));
     }
@@ -231,13 +285,7 @@ class READMEExamplesIntegrationTest {
 
         JsonNode authorization = postJson(
                 "/x402/payment-intents/" + paymentIntentId + "/authorize",
-                """
-                {
-                  "nonce": 21,
-                  "deadline": "2026-12-31T23:59:59Z",
-                  "signature": "demo-signature"
-                }
-                """,
+                buildAuthRequestJson(1000, futureDeadline(), randomNonce()),
                 null
         );
 
@@ -259,6 +307,8 @@ class READMEExamplesIntegrationTest {
                 .andExpect(jsonPath("$.reportId").value("premium-report-001"))
                 .andExpect(jsonPath("$.paymentIntentId").value(paymentIntentId));
     }
+
+    // ── 내부 헬퍼 ────────────────────────────────────────────────────────────
 
     private String createReadmeStyleIntent(String idempotencyKey) throws Exception {
         JsonNode intent = postJson(
@@ -292,5 +342,21 @@ class READMEExamplesIntegrationTest {
                 .andReturn();
 
         return objectMapper.readTree(result.getResponse().getContentAsString());
+    }
+
+    private static byte[] hexToBytes(String hex) {
+        int len = hex.length();
+        byte[] data = new byte[len / 2];
+        for (int i = 0; i < len; i += 2) {
+            data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
+                    + Character.digit(hex.charAt(i + 1), 16));
+        }
+        return data;
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 }

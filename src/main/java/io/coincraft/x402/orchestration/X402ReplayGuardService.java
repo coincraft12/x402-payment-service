@@ -10,7 +10,12 @@ public class X402ReplayGuardService {
 
     private final PaymentAuthorizationRepository authorizationRepository;
 
-    public boolean isReplay(String payer, long nonce, String digest) {
+    /**
+     * @param payer  payer Ethereum address
+     * @param nonce  EIP-3009 bytes32 nonce (hex, without 0x)
+     * @param digest EIP-712 digest (hex)
+     */
+    public boolean isReplay(String payer, String nonce, String digest) {
         return authorizationRepository.existsByDigest(digest)
                 || authorizationRepository.existsByPayerAndNonce(payer, nonce);
     }

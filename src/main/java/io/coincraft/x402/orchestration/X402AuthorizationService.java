@@ -12,7 +12,7 @@ import io.coincraft.x402.domain.intent.PaymentIntentStatus;
 import io.coincraft.x402.orchestration.policy.PaymentScopePolicyDecision;
 import io.coincraft.x402.orchestration.policy.X402PolicyContext;
 import io.coincraft.x402.orchestration.policy.X402PolicyEngine;
-import io.coincraft.x402.support.AuthorizationDigestFactory;
+import io.coincraft.x402.support.Eip3009Verifier;
 import io.coincraft.x402.support.X402InvalidRequestException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,7 +31,7 @@ public class X402AuthorizationService {
     private final PaymentAuditLogRepository auditLogRepository;
     private final X402PolicyEngine policyEngine;
     private final X402ReplayGuardService replayGuardService;
-    private final AuthorizationDigestFactory digestFactory;
+    private final Eip3009Verifier eip3009Verifier;
     private final X402LedgerService ledgerService;
 
     @Transactional
@@ -41,15 +41,20 @@ public class X402AuthorizationService {
 
         validateAuthorizeRequest(request);
 
-        String digest = digestFactory.digest(intent, request.nonce(), request.deadline());
-        boolean replayDetected = replayGuardService.isReplay(intent.getPayer(), request.nonce(), digest);
+        // EIP-3009 서명 검증 — 실패 시 X402InvalidRequestException throw
+        eip3009Verifier.verify(request);
+
+        String digest = eip3009Verifier.digest(request);
+        String nonce = normalizeNonce(request.nonce());
+        boolean replayDetected = replayGuardService.isReplay(request.from(), nonce, digest);
 
         PaymentScopePolicyDecision decision = policyEngine.evaluate(
                 X402PolicyContext.forAuthorize(intent, request, replayDetected)
         );
 
         if (!decision.allowed()) {
-            if ("AUTHORIZATION_EXPIRED".equals(decision.reason())) {
+            if ("AUTHORIZATION_EXPIRED".equals(decision.reason())
+                    || "AUTHORIZATION_NOT_YET_VALID".equals(decision.reason())) {
                 intent.transitionTo(PaymentIntentStatus.PI10_EXPIRED);
                 intentRepository.save(intent);
             }
@@ -57,14 +62,17 @@ public class X402AuthorizationService {
             throw new X402InvalidRequestException(decision.reason());
         }
 
+        String signatureSummary = "v=%d,r=%s,s=%s".formatted(request.v(), request.r(), request.s());
         PaymentAuthorization authorization = PaymentAuthorization.issued(
                 intent.getId(),
-                intent.getPayer(),
-                intent.getPayee(),
-                request.nonce(),
-                request.deadline(),
+                request.from(),
+                request.to(),
+                request.value(),
+                request.validAfter(),
+                request.validBefore(),
+                nonce,
                 digest,
-                request.signature()
+                signatureSummary
         );
         authorization.transitionTo(PaymentAuthorizationStatus.PA1_PRESENTED);
         authorization.transitionTo(PaymentAuthorizationStatus.PA2_VERIFIED);
@@ -85,14 +93,29 @@ public class X402AuthorizationService {
         if (request == null) {
             throw new X402InvalidRequestException("authorization request is required");
         }
-        if (request.nonce() == null || request.nonce() < 0) {
-            throw new X402InvalidRequestException("nonce must be >= 0");
+        if (request.from() == null || request.from().isBlank()) {
+            throw new X402InvalidRequestException("from address is required");
         }
-        if (request.deadline() == null) {
-            throw new X402InvalidRequestException("deadline is required");
+        if (request.to() == null || request.to().isBlank()) {
+            throw new X402InvalidRequestException("to address is required");
         }
-        if (request.signature() == null || request.signature().isBlank()) {
-            throw new X402InvalidRequestException("signature is required");
+        if (request.value() == null || request.value().signum() <= 0) {
+            throw new X402InvalidRequestException("value must be > 0");
         }
+        if (request.validBefore() <= 0) {
+            throw new X402InvalidRequestException("validBefore is required");
+        }
+        if (request.nonce() == null || request.nonce().isBlank()) {
+            throw new X402InvalidRequestException("nonce is required");
+        }
+        if (request.r() == null || request.s() == null) {
+            throw new X402InvalidRequestException("signature r,s are required");
+        }
+    }
+
+    /** bytes32 nonce를 0x 없는 소문자 hex 64자로 정규화 */
+    private static String normalizeNonce(String nonce) {
+        String h = nonce.startsWith("0x") || nonce.startsWith("0X") ? nonce.substring(2) : nonce;
+        return h.toLowerCase();
     }
 }

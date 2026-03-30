@@ -2,6 +2,7 @@ package io.coincraft.x402.api;
 
 import io.coincraft.x402.domain.authorization.PaymentAuthorization;
 
+import java.math.BigInteger;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -10,8 +11,10 @@ public record PaymentAuthorizationResponse(
         UUID paymentIntentId,
         String payer,
         String payee,
-        long nonce,
-        Instant deadline,
+        BigInteger value,
+        long validAfter,
+        long validBefore,
+        String nonce,
         String digest,
         String status,
         boolean consumed,
@@ -24,8 +27,10 @@ public record PaymentAuthorizationResponse(
                 authorization.getPaymentIntentId(),
                 authorization.getPayer(),
                 authorization.getPayee(),
+                authorization.getValue(),
+                authorization.getValidAfter(),
+                authorization.getValidBefore(),
                 authorization.getNonce(),
-                authorization.getDeadline(),
                 authorization.getDigest(),
                 authorization.getStatus().name(),
                 authorization.isConsumed(),
