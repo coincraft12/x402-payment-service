@@ -1,0 +1,74 @@
+package io.coincraft.x402.orchestration;
+
+import io.coincraft.x402.domain.audit.PaymentAuditLog;
+import io.coincraft.x402.domain.audit.PaymentAuditLogRepository;
+import io.coincraft.x402.domain.authorization.PaymentAuthorization;
+import io.coincraft.x402.domain.authorization.PaymentAuthorizationRepository;
+import io.coincraft.x402.domain.intent.PaymentIntent;
+import io.coincraft.x402.domain.intent.PaymentIntentRepository;
+import io.coincraft.x402.domain.intent.PaymentIntentStatus;
+import io.coincraft.x402.domain.settlement.PaymentSettlement;
+import io.coincraft.x402.domain.settlement.PaymentSettlementRepository;
+import io.coincraft.x402.domain.settlement.PaymentSettlementStatus;
+import io.coincraft.x402.support.X402InvalidRequestException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class X402SettlementService {
+
+    private final PaymentIntentRepository intentRepository;
+    private final PaymentAuthorizationRepository authorizationRepository;
+    private final PaymentSettlementRepository settlementRepository;
+    private final PaymentAuditLogRepository auditLogRepository;
+    private final X402LedgerService ledgerService;
+
+    @Transactional
+    public PaymentSettlement capture(UUID paymentIntentId, UUID authorizationId) {
+        PaymentIntent intent = intentRepository.findById(paymentIntentId)
+                .orElseThrow(() -> new X402InvalidRequestException("payment intent not found: " + paymentIntentId));
+
+        PaymentAuthorization authorization = authorizationRepository.findById(authorizationId)
+                .orElseThrow(() -> new X402InvalidRequestException("authorization not found: " + authorizationId));
+
+        if (!authorization.getPaymentIntentId().equals(paymentIntentId)) {
+            throw new X402InvalidRequestException("authorization does not belong to payment intent");
+        }
+        if (authorization.isConsumed()) {
+            throw new X402InvalidRequestException("authorization already consumed");
+        }
+
+        PaymentSettlement settlement = PaymentSettlement.reserved(paymentIntentId, authorizationId);
+        settlement = settlementRepository.save(settlement);
+
+        intent.transitionTo(PaymentIntentStatus.PI3_CAPTURED);
+        intentRepository.save(intent);
+        ledgerService.commit(intent);
+
+        settlement.transitionTo(PaymentSettlementStatus.PS1_COMMITTED);
+        settlement = settlementRepository.save(settlement);
+
+        authorization.markConsumed();
+        authorizationRepository.save(authorization);
+
+        ledgerService.settle(intent);
+        settlement.transitionTo(PaymentSettlementStatus.PS2_SETTLED);
+        settlement = settlementRepository.save(settlement);
+
+        intent.transitionTo(PaymentIntentStatus.PI4_SETTLED);
+        intentRepository.save(intent);
+
+        auditLogRepository.save(PaymentAuditLog.of(paymentIntentId, true, "settlement.completed", "SETTLEMENT_COMPLETED"));
+
+        log.info("event=x402.settlement.completed paymentIntentId={} authorizationId={} settlementId={}",
+                paymentIntentId, authorizationId, settlement.getId());
+
+        return settlement;
+    }
+}
