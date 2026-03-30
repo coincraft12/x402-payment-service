@@ -1,472 +1,267 @@
-# x402-payment-lab
+# x402-payment-service
 
-독립 실행 가능한 x402 payment authorization 실습 프로젝트다.
+x402 프로토콜 기반 결제 인가 서비스. EIP-3009 `transferWithAuthorization` 서명 검증, 정책 엔진, 원장, 감사 로그를 포함한다.
 
-이 프로젝트는 `HTTP 402 Payment Required` 스타일의 결제 authorization 흐름을, custody 관점의 `policy`, `replay protection`, `ledger`, `audit` 구조로 실습하기 위한 Spring Boot 앱이다.
+---
 
-핵심 흐름:
+## 구현 현황
 
-1. 보호 자원 접근
-2. `402 Payment Required` challenge 수신
-3. payment intent authorize
-4. capture
-5. 같은 요청 재시도
-6. `200 OK`로 보호 자원 접근 허용
+| 단계 | 내용 | 상태 |
+|---|---|---|
+| 1단계 | EIP-3009 서명 검증 (EIP-712 digest + ecrecover) | ✅ 완료 |
+| 2단계 | x402 표준 challenge 응답 (`accepts[]`, network, asset contract) | ✅ 완료 |
+| 3단계 | PostgreSQL 전환 (테스트는 H2 유지) | ✅ 완료 |
+| 4단계 | Facilitator 외부화 (verify/settle 온체인 브로드캐스트 분리) | 🔲 TODO |
 
-주요 엔드포인트:
+---
 
-1. `GET /x402/protected/report`
-2. `POST /x402/payment-intents/{id}/authorize`
-3. `POST /x402/payment-intents/{id}/capture`
-4. `GET /x402/payment-intents/{id}`
-5. `GET /x402/payment-intents/{id}/audits`
-6. `GET /x402/payment-intents/{id}/ledger`
+## 핵심 흐름
+
+```
+클라이언트                          x402-payment-service
+    │                                       │
+    │── GET /x402/protected/report ────────▶│
+    │                                       │ PaymentIntent 생성
+    │◀── 402 + accepts[] + paymentIntentId ─│
+    │                                       │
+    │── POST /authorize (EIP-3009 sig) ────▶│
+    │                                       │ EIP-712 digest 검증
+    │                                       │ ecrecover → from 주소 확인
+    │                                       │ replay 방지 (nonce + digest)
+    │◀── PA2_VERIFIED + authorizationId ────│
+    │                                       │
+    │── POST /capture (authorizationId) ───▶│
+    │                                       │ ledger: RESERVE→COMMIT→SETTLE
+    │◀── PS2_SETTLED ───────────────────────│
+    │                                       │
+    │── GET /x402/protected/report ────────▶│ (동일 Idempotency-Key)
+    │◀── 200 OK + report payload ───────────│
+```
 
 ---
 
 ## 실행
 
-프로젝트 루트:
+### 사전 조건
 
-```powershell
-cd F:\Workplace\custody\x402-payment-lab
+PostgreSQL이 실행 중이어야 한다.
+
+```bash
+# Docker로 빠르게 띄우기
+docker run -d \
+  --name x402-postgres \
+  -e POSTGRES_DB=x402 \
+  -e POSTGRES_USER=x402 \
+  -e POSTGRES_PASSWORD=x402 \
+  -p 5432:5432 \
+  postgres:16
 ```
 
-앱 실행:
+### 앱 실행
 
-```powershell
+```bash
+cd F:\Workplace\x402-payment-service
+
+# 기본값으로 실행 (localhost:5432, DB/USER/PASSWORD 모두 x402)
+.\gradlew.bat bootRun
+
+# 환경변수로 오버라이드
+$env:DB_URL      = "jdbc:postgresql://localhost:5432/x402"
+$env:DB_USERNAME = "x402"
+$env:DB_PASSWORD = "x402"
 .\gradlew.bat bootRun
 ```
 
-기본 URL:
+기본 URL: `http://localhost:8080`
 
-```text
-http://localhost:8080
-```
+### 테스트 실행
 
-H2 Console:
+테스트는 H2 in-memory DB를 사용하므로 PostgreSQL 없이도 실행 가능하다.
 
-```text
-http://localhost:8080/h2
+```bash
+.\gradlew.bat test
 ```
 
 ---
 
-## 설정
+## 환경변수 설정
 
-기본 정책 설정은 [application.yaml](./src/main/resources/application.yaml) 에 있다.
-
-```yaml
-x402:
-  policy:
-    max-amount: 10000
-    allowed-merchants: demo-merchant,lab-merchant
-  challenge:
-    report:
-      merchant-id: demo-merchant
-      endpoint: /x402/protected/report
-      asset: USDC
-      amount: 1000
-      payee: merchant-vault
-```
-
-의미:
-
-1. 기본 최대 결제 금액은 `10000`
-2. 허용 merchant는 `demo-merchant`, `lab-merchant`
-3. 보호 리포트 접근 비용은 `1000 USDC`
-
-환경변수로 덮어쓸 수 있다.
-
-PowerShell 예시:
-
-```powershell
-$env:X402_POLICY_MAX_AMOUNT = "20000"
-$env:X402_ALLOWED_MERCHANTS = "demo-merchant,lab-merchant,test-merchant"
-$env:X402_CHALLENGE_REPORT_AMOUNT = "1500"
-.\gradlew.bat bootRun
-```
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `DB_URL` | `jdbc:postgresql://localhost:5432/x402` | PostgreSQL JDBC URL |
+| `DB_USERNAME` | `x402` | DB 사용자명 |
+| `DB_PASSWORD` | `x402` | DB 비밀번호 |
+| `DB_POOL_SIZE` | `10` | HikariCP 최대 커넥션 수 |
+| `JPA_DDL_AUTO` | `validate` | Hibernate DDL 전략 |
+| `X402_EIP3009_CHAIN_ID` | `8453` | EIP-712 domain chain ID (Base Mainnet) |
+| `X402_EIP3009_TOKEN_NAME` | `USD Coin` | EIP-712 domain token name |
+| `X402_EIP3009_TOKEN_VERSION` | `2` | EIP-712 domain token version |
+| `X402_EIP3009_TOKEN_CONTRACT` | `0xA0b86991...` | USDC 컨트랙트 주소 |
+| `X402_POLICY_MAX_AMOUNT` | `10000` | 단일 결제 허용 최대 금액 |
+| `X402_ALLOWED_MERCHANTS` | `demo-merchant,lab-merchant` | 허용 merchant ID 목록 |
 
 ---
 
-## API 요약
+## API
 
 | Method | Path | 설명 |
 |---|---|---|
-| `GET` | `/x402/protected/report` | 보호 자원 접근. 미결제 시 `402 Payment Required` 반환 |
-| `POST` | `/x402/payment-intents` | payment intent 직접 생성 |
-| `POST` | `/x402/payment-intents/{id}/authorize` | authorization 제출 및 검증 |
-| `POST` | `/x402/payment-intents/{id}/capture` | authorization 소비 및 settlement 완료 |
-| `GET` | `/x402/payment-intents/{id}` | intent 상태 조회 |
-| `GET` | `/x402/payment-intents/{id}/audits` | audit trail 조회 |
-| `GET` | `/x402/payment-intents/{id}/ledger` | ledger entry 조회 |
+| `GET` | `/x402/protected/report` | 보호 자원 접근. 미결제 시 `402` 반환 |
+| `POST` | `/x402/payment-intents` | PaymentIntent 직접 생성 |
+| `POST` | `/x402/payment-intents/{id}/authorize` | EIP-3009 서명 제출 및 검증 |
+| `POST` | `/x402/payment-intents/{id}/capture` | Authorization 소비 및 정산 |
+| `GET` | `/x402/payment-intents/{id}` | Intent 상태 조회 |
+| `GET` | `/x402/payment-intents/{id}/audits` | Audit trail 조회 |
+| `GET` | `/x402/payment-intents/{id}/ledger` | Ledger entry 조회 |
 
 ---
 
-## 빠른 시작 / PowerShell 예제 1~5
+## 402 Challenge 응답 구조
 
-아래 순서대로 실행하면 된다.
-
-1. 보호 리포트 접근
-2. `402` challenge 확인
-3. challenge에 담긴 payment intent로 authorize
-4. capture 실행
-5. 같은 보호 리포트 요청 재시도
-6. `200 OK` 응답 확인
-
----
-
-## PowerShell 예제 0. 공통 변수
-
-```powershell
-$BASE_URL = "http://localhost:8080"
-```
-
-## PowerShell 예제 1. 보호 자원 접근 -> 402 challenge 받기
-
-```powershell
-$challenge = $null
-
-try {
-  Invoke-RestMethod -Method GET `
-    -Uri "$BASE_URL/x402/protected/report" `
-    -Headers @{
-      "Idempotency-Key" = "x402-report-001"
-      "X-Payer" = "agent-1"
+```json
+{
+  "x402Version": 1,
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "base-mainnet",
+      "maxAmountRequired": "1000",
+      "resource": "/x402/protected/report",
+      "description": "Payment required to access /x402/protected/report",
+      "mimeType": "application/json",
+      "payTo": "merchant-vault",
+      "maxTimeoutSeconds": 300,
+      "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "extra": {
+        "name": "USD Coin",
+        "version": "2"
+      }
     }
-} catch {
-  $resp = $_.Exception.Response
-  $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
-  $raw = $reader.ReadToEnd()
-  $challenge = $raw | ConvertFrom-Json
+  ],
+  "error": "X402 Payment Required",
+  "status": 402,
+  "paymentIntentId": "<uuid>",
+  "authorizePath": "/x402/payment-intents/<uuid>/authorize",
+  "capturePath": "/x402/payment-intents/<uuid>/capture",
+  "auditsPath": "/x402/payment-intents/<uuid>/audits",
+  "ledgerPath": "/x402/payment-intents/<uuid>/ledger"
 }
-
-$challenge
-$paymentIntentId = $challenge.paymentIntentId
 ```
 
-예상 결과:
+응답 헤더:
 
-1. HTTP status `402 Payment Required`
-2. 응답 헤더에도 결제 메타데이터가 같이 포함됨
-3. body 안에 `paymentIntentId`, `authorizePath`, `capturePath` 포함
-
-예상 응답 핵심:
-
-```powershell
-status         : 402
-error          : payment_required
-message        : Payment is required before accessing this protected report.
-paymentIntentId: <uuid>
-endpoint       : /x402/protected/report
-asset          : USDC
-amount         : 1000
 ```
-
-예상 헤더 예시:
-
-```text
-X-Payment-Protocol: x402-lab
+X-Payment-Protocol: x402/1
 X-Payment-Required: true
 X-Payment-Intent-Id: <uuid>
 X-Payment-Merchant: demo-merchant
 X-Payment-Endpoint: /x402/protected/report
 X-Payment-Asset: USDC
 X-Payment-Amount: 1000
-X-Payment-Payer: agent-1
-X-Payment-Payee: merchant-vault
-Link: </x402/payment-intents/<uuid>/authorize>; rel="authorize", </x402/payment-intents/<uuid>/capture>; rel="capture", ...
-```
-
-PowerShell에서 헤더를 직접 보고 싶다면:
-
-```powershell
-try {
-  Invoke-WebRequest -Method GET `
-    -Uri "$BASE_URL/x402/protected/report" `
-    -Headers @{
-      "Idempotency-Key" = "x402-report-headers-001"
-      "X-Payer" = "agent-1"
-    }
-} catch {
-  $_.Exception.Response.Headers
-}
-```
-
-## PowerShell 예제 2. Authorization 제출
-
-```powershell
-$auth = Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/authorize" `
-  -Headers @{ "Content-Type" = "application/json" } `
-  -Body (@{
-    nonce     = 1
-    deadline  = "2026-12-31T23:59:59Z"
-    signature = "demo-signature"
-  } | ConvertTo-Json)
-
-$auth
-$authorizationId = $auth.id
-```
-
-예상 응답 핵심:
-
-```powershell
-id              : <authorization-uuid>
-paymentIntentId : <intent-uuid>
-nonce           : 1
-status          : PA2_VERIFIED
-consumed        : False
-```
-
-## PowerShell 예제 3. Capture 실행
-
-```powershell
-$settlement = Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/capture" `
-  -Headers @{ "Content-Type" = "application/json" } `
-  -Body (@{
-    authorizationId = $authorizationId
-  } | ConvertTo-Json)
-
-$settlement
-```
-
-예상 응답 핵심:
-
-```powershell
-id              : <settlement-uuid>
-paymentIntentId : <intent-uuid>
-authorizationId : <authorization-uuid>
-status          : PS2_SETTLED
-```
-
-## PowerShell 예제 4. 같은 보호 자원 요청 재시도 -> 200 OK
-
-```powershell
-$report = Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/x402/protected/report" `
-  -Headers @{
-    "Idempotency-Key" = "x402-report-001"
-    "X-Payer" = "agent-1"
-  }
-
-$report
-```
-
-예상 응답 핵심:
-
-```powershell
-accessGranted : True
-reportId      : premium-report-001
-reportName    : Premium Custody Revenue Report
-paymentIntentId : <intent-uuid>
-```
-
-## PowerShell 예제 5. Intent / Audit / Ledger 조회
-
-```powershell
-Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId"
-Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/audits"
-Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/ledger"
-```
-
-예상 상태:
-
-```powershell
-status : PI4_SETTLED
-```
-
-예상 audit 이벤트 예시:
-
-1. `intent.created`
-2. `policy.evaluated`
-3. `authorization.verified`
-4. `settlement.completed`
-
-예상 ledger entry 예시:
-
-1. `RESERVE`
-2. `COMMIT`
-3. `SETTLE`
-
----
-
-## Payment Intent 직접 생성 예제
-
-challenge endpoint 대신 payment intent를 직접 만들고 싶다면 아래를 사용하면 된다.
-
-```powershell
-$intent = Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/x402/payment-intents" `
-  -Headers @{
-    "Content-Type" = "application/json"
-    "Idempotency-Key" = "x402-intent-001"
-  } `
-  -Body (@{
-    merchantId = "demo-merchant"
-    endpoint   = "/premium/report"
-    asset      = "USDC"
-    amount     = 1000
-    payer      = "agent-1"
-    payee      = "merchant-vault"
-  } | ConvertTo-Json)
-
-$intent
+X-Payment-Payer: <payer>
+Link: </x402/payment-intents/<uuid>/authorize>; rel="authorize", ...
 ```
 
 ---
 
-## 실패 시나리오 예제 1. 허용되지 않은 merchant
+## Authorization 요청 구조 (EIP-3009)
 
-```powershell
-$badIntent = Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/x402/payment-intents" `
-  -Headers @{
-    "Content-Type" = "application/json"
-    "Idempotency-Key" = "x402-intent-bad-merchant"
-  } `
-  -Body (@{
-    merchantId = "unknown-merchant"
-    endpoint   = "/premium/report"
-    asset      = "USDC"
-    amount     = 1000
-    payer      = "agent-1"
-    payee      = "merchant-vault"
-  } | ConvertTo-Json)
-
-$badIntent
-Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$($badIntent.id)/audits"
-```
-
-예상 결과:
-
-1. intent 상태 `PI9_REJECTED`
-2. audit에 `MERCHANT_NOT_ALLOWED`
-
-## 실패 시나리오 예제 2. 금액 초과
-
-```powershell
-$tooLargeIntent = Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/x402/payment-intents" `
-  -Headers @{
-    "Content-Type" = "application/json"
-    "Idempotency-Key" = "x402-intent-too-large"
-  } `
-  -Body (@{
-    merchantId = "demo-merchant"
-    endpoint   = "/premium/report"
-    asset      = "USDC"
-    amount     = 999999
-    payer      = "agent-1"
-    payee      = "merchant-vault"
-  } | ConvertTo-Json)
-
-$tooLargeIntent
-Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$($tooLargeIntent.id)/audits"
-```
-
-예상 결과:
-
-1. intent 상태 `PI9_REJECTED`
-2. audit에 `ENDPOINT_AMOUNT_LIMIT_EXCEEDED`
-
-## 실패 시나리오 예제 3. Authorization replay
-
-동일한 `payer + nonce` 또는 동일 digest를 다시 보내면 거절된다.
-
-```powershell
-try {
-  Invoke-RestMethod -Method POST `
-    -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/authorize" `
-    -Headers @{ "Content-Type" = "application/json" } `
-    -Body (@{
-      nonce     = 1
-      deadline  = "2026-12-31T23:59:59Z"
-      signature = "demo-signature"
-    } | ConvertTo-Json)
-} catch {
-  $resp = $_.Exception.Response
-  $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
-  $reader.ReadToEnd()
+```json
+{
+  "from": "0x<payer address>",
+  "to": "0x<payee address>",
+  "value": 1000,
+  "validAfter": 0,
+  "validBefore": 1798761599,
+  "nonce": "0x<bytes32 hex>",
+  "v": 28,
+  "r": "0x<bytes32 hex>",
+  "s": "0x<bytes32 hex>"
 }
 ```
 
-예상 결과:
+서명 검증 방식:
 
-1. `400 Bad Request`
-2. 메시지: `AUTHORIZATION_REPLAY_BLOCKED`
-
-## 실패 시나리오 예제 4. 만료된 authorization
-
-```powershell
-try {
-  Invoke-RestMethod -Method POST `
-    -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/authorize" `
-    -Headers @{ "Content-Type" = "application/json" } `
-    -Body (@{
-      nonce     = 99
-      deadline  = "2024-01-01T00:00:00Z"
-      signature = "expired-signature"
-    } | ConvertTo-Json)
-} catch {
-  $resp = $_.Exception.Response
-  $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
-  $reader.ReadToEnd()
-}
-```
-
-예상 결과:
-
-1. `400 Bad Request`
-2. 메시지: `AUTHORIZATION_EXPIRED`
-
-## 실패 시나리오 예제 5. Idempotency 충돌
-
-같은 `Idempotency-Key`로 다른 body를 보내면 충돌이 난다.
-
-```powershell
-try {
-  Invoke-RestMethod -Method POST `
-    -Uri "$BASE_URL/x402/payment-intents" `
-    -Headers @{
-      "Content-Type" = "application/json"
-      "Idempotency-Key" = "x402-intent-001"
-    } `
-    -Body (@{
-      merchantId = "demo-merchant"
-      endpoint   = "/premium/report"
-      asset      = "USDC"
-      amount     = 2000
-      payer      = "agent-1"
-      payee      = "merchant-vault"
-    } | ConvertTo-Json)
-} catch {
-  $resp = $_.Exception.Response
-  $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
-  $reader.ReadToEnd()
-}
-```
-
-예상 결과:
-
-1. `409 Conflict`
-2. 메시지: `same Idempotency-Key cannot be used with a different x402 payment intent body`
+1. EIP-712 domain separator 계산 (chainId, tokenName, tokenVersion, tokenContract)
+2. `TransferWithAuthorization` struct hash 계산
+3. EIP-712 final digest = `keccak256(0x1901 || domainSeparator || structHash)`
+4. `ecrecover(digest, v, r, s)` → 복원 주소 = `from` 확인
 
 ---
 
-## 관련 문서
+## PaymentIntent 상태머신
 
-- [Session4_ x402 Package Structure Draft.md](/f:/Workplace/custody/custody%20track/Session4_%20x402%20Package%20Structure%20Draft.md)
-- [Session4_ x402 Payment Authorization.md](/f:/Workplace/custody/custody%20track/Session4_%20x402%20Payment%20Authorization.md)
+```
+PI0_REQUESTED
+    │
+    ▼
+PI1_POLICY_CHECKED ──(정책 거부)──▶ PI9_REJECTED
+    │
+    ▼
+PI2_AUTHORIZED ──(만료)──▶ PI10_EXPIRED
+    │
+    ▼
+PI3_CAPTURED
+    │
+    ▼
+PI4_SETTLED
+```
 
 ---
 
-## 다음 단계
+## TODO — 4단계: Facilitator 외부화
 
-현재는 스캐폴딩과 로컬 실습 중심이다. 다음으로 자연스러운 확장 방향은 다음과 같다.
+현재 settlement는 내부 ledger 업데이트만 수행한다. 실제 온체인 결제를 처리하려면 아래 작업이 필요하다.
 
-1. challenge 응답에 만료 시간, 체인/토큰 메타데이터를 더 풍부하게 넣기
-2. 실제 `HTTP 402` 헤더 표현 방식 추가
-3. signature 검증 로직을 mock 검증에서 구조화 검증으로 강화
-4. provider 또는 relayer 연동으로 settlement 외부화
+### 배경
+
+x402 프로토콜에서 **Facilitator**는 non-custodial 중간 레이어로, 두 가지 책임을 분리한다:
+
+| 역할 | 설명 |
+|---|---|
+| **Verifier** | EIP-3009 서명의 온체인 유효성 검증 (잔액, nonce, 주소 확인) |
+| **Settler** | 검증된 authorization을 실제 체인에 브로드캐스트 |
+
+### 구현 항목
+
+**[ ] FacilitatorClient 인터페이스 정의**
+```java
+public interface FacilitatorClient {
+    VerifyResult verify(AuthorizePaymentRequest request);
+    SettleResult settle(UUID paymentIntentId, UUID authorizationId);
+}
+```
+
+**[ ] BaseFacilitatorClient 구현**
+- Base RPC 연동 (`eth_call` → USDC 잔액, allowance 확인)
+- `transferWithAuthorization` 트랜잭션 브로드캐스트
+- 트랜잭션 해시 수신 및 저장
+
+**[ ] X402SettlementService 수정**
+- `ledgerService.settle()` 이후 `facilitatorClient.settle()` 호출
+- 트랜잭션 해시를 `PaymentSettlement`에 저장
+- 외부 시스템 호출이 포함되므로 트랜잭션 경계 재설계 필요
+
+**[ ] 온체인 settlement 상태 추적**
+- `PaymentSettlement`에 `txHash`, `blockNumber`, `onchainStatus` 필드 추가
+- 비동기 confirmation 폴링 또는 webhook 수신
+
+**[ ] 환경변수 추가**
+```
+X402_FACILITATOR_RPC_URL   = https://mainnet.base.org
+X402_FACILITATOR_PRIVATE_KEY = <hot wallet key>
+```
+
+### 참고
+
+- Facilitator는 custodial이 아니어야 함 — 자산을 보관하지 않고 브로드캐스트만 수행
+- verify 단계에서 온체인 잔액 확인 → settle 실패 사전 차단
+- Base Mainnet USDC: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+
+---
+
+## 관련 레포
+
+- `f:\Workplace\custody\x402-payment-lab` — 학습용 mock 구현 (reference)
+- `f:\Workplace\custody\custody track\` — x402 설계 문서
