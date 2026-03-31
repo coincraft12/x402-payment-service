@@ -11,7 +11,7 @@ spring:
       connection-timeout: 30000
   jpa:
     hibernate:
-      ddl-auto: ${JPA_DDL_AUTO:validate}
+      ddl-auto: ${JPA_DDL_AUTO:update}
     show-sql: false
     properties:
       hibernate:
@@ -34,3 +34,5 @@ x402:
       asset: ${X402_CHALLENGE_REPORT_ASSET:USDC}
       amount: ${X402_CHALLENGE_REPORT_AMOUNT:1000}
       payee: ${X402_CHALLENGE_REPORT_PAYEE:merchant-vault}
+server:
+  port: 8081
