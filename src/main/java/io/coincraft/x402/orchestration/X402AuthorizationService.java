@@ -62,7 +62,6 @@ public class X402AuthorizationService {
             throw new X402InvalidRequestException(decision.reason());
         }
 
-        String signatureSummary = "v=%d,r=%s,s=%s".formatted(request.v(), request.r(), request.s());
         PaymentAuthorization authorization = PaymentAuthorization.issued(
                 intent.getId(),
                 request.from(),
@@ -72,7 +71,9 @@ public class X402AuthorizationService {
                 request.validBefore(),
                 nonce,
                 digest,
-                signatureSummary
+                request.v(),
+                request.r(),
+                request.s()
         );
         authorization.transitionTo(PaymentAuthorizationStatus.PA1_PRESENTED);
         authorization.transitionTo(PaymentAuthorizationStatus.PA2_VERIFIED);

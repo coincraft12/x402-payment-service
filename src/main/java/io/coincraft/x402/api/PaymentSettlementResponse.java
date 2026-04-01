@@ -11,6 +11,7 @@ public record PaymentSettlementResponse(
         UUID authorizationId,
         String settlementRef,
         String status,
+        String txHash,
         Instant createdAt,
         Instant updatedAt
 ) {
@@ -21,6 +22,7 @@ public record PaymentSettlementResponse(
                 settlement.getAuthorizationId(),
                 settlement.getSettlementRef(),
                 settlement.getStatus().name(),
+                settlement.getTxHash(),
                 settlement.getCreatedAt(),
                 settlement.getUpdatedAt()
         );

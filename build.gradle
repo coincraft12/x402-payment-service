@@ -22,6 +22,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.web3j:crypto:4.12.3'
+    implementation 'org.web3j:core:4.12.3'
 
     runtimeOnly 'org.postgresql:postgresql'
 

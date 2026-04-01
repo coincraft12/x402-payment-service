@@ -27,6 +27,10 @@ x402:
   policy:
     max-amount: ${X402_POLICY_MAX_AMOUNT:10000}
     allowed-merchants: ${X402_ALLOWED_MERCHANTS:demo-merchant,lab-merchant}
+  facilitator:
+    enabled: ${X402_FACILITATOR_ENABLED:false}
+    rpc-url: ${X402_FACILITATOR_RPC_URL:https://sepolia.base.org}
+    private-key: ${X402_FACILITATOR_PRIVATE_KEY:}
   challenge:
     report:
       merchant-id: ${X402_CHALLENGE_REPORT_MERCHANT_ID:demo-merchant}

@@ -11,7 +11,7 @@ x402 프로토콜 기반 결제 인가 서비스. EIP-3009 `transferWithAuthoriz
 | 1단계 | EIP-3009 서명 검증 (EIP-712 digest + ecrecover) | ✅ 완료 |
 | 2단계 | x402 표준 challenge 응답 (`accepts[]`, network, asset contract) | ✅ 완료 |
 | 3단계 | PostgreSQL 전환 (테스트는 H2 유지) | ✅ 완료 |
-| 4단계 | Facilitator 외부화 (verify/settle 온체인 브로드캐스트 분리) | 🔲 TODO |
+| 4단계 | Facilitator 온체인 브로드캐스트 (`transferWithAuthorization` via web3j) | ✅ 완료 |
 
 ---
 
@@ -32,7 +32,9 @@ x402 프로토콜 기반 결제 인가 서비스. EIP-3009 `transferWithAuthoriz
     │                                       │
     │── POST /capture (authorizationId) ───▶│
     │                                       │ ledger: RESERVE→COMMIT→SETTLE
-    │◀── PS2_SETTLED ───────────────────────│
+    │                                       │ Facilitator: transferWithAuthorization 브로드캐스트
+    │                                       │ → txHash를 PaymentSettlement에 저장
+    │◀── PS2_SETTLED + txHash ──────────────│
     │                                       │
     │── GET /x402/protected/report ────────▶│ (동일 Idempotency-Key)
     │◀── 200 OK + report payload ───────────│
@@ -94,6 +96,9 @@ $env:DB_PASSWORD = "x402"
 | `X402_EIP3009_TOKEN_CONTRACT` | `0xA0b86991...` | USDC 컨트랙트 주소 |
 | `X402_POLICY_MAX_AMOUNT` | `10000` | 단일 결제 허용 최대 금액 |
 | `X402_ALLOWED_MERCHANTS` | `demo-merchant,lab-merchant` | 허용 merchant ID 목록 |
+| `X402_FACILITATOR_ENABLED` | `false` | 온체인 브로드캐스트 활성화 |
+| `X402_FACILITATOR_RPC_URL` | `https://sepolia.base.org` | 온체인 브로드캐스트용 RPC 엔드포인트 |
+| `X402_FACILITATOR_PRIVATE_KEY` | _(없음)_ | 핫월렛 개인키 (`0x` 접두사 없이) |
 
 ---
 
@@ -282,104 +287,42 @@ Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/ledger"
 
 ---
 
-### C. 수동 API 테스트 — 전체 결제 흐름 (서명 필요)
+### C. 수동 API 테스트 — 전체 결제 흐름 + 온체인 정산 (Base Sepolia)
 
-authorize 단계는 EIP-3009 서명이 필요하다. 아래 Python 스크립트로 서명을 생성한다.
+authorize 단계는 EIP-3009 서명이 필요하다. 포함된 Node.js 스크립트로 서명을 생성한다.
 
-#### 사전 설치
+#### 사전 조건
 
-```bash
-pip install web3 eth-account
+Node.js v18 이상 필요.
+
+```powershell
+cd F:\Workplace\x402-payment-service
+npm install
 ```
 
-#### 서명 생성 스크립트
+#### 환경변수 (Base Sepolia)
 
-`generate_sig.py`로 저장 후 실행:
-
-```python
-from eth_account import Account
-from eth_account.messages import encode_typed_data
-
-# ── 설정 (실제 값으로 교체) ──────────────────────────────────────
-PRIVATE_KEY      = "0x4c0883a69102937d6231471b5dbb6e538eba2ef2d28aa3e45bed14d0a37f52ea"
-FROM_ADDRESS     = "0xabad1fd3fe392a6b45f6a80955263c4575defb91"  # PRIVATE_KEY에 대응하는 주소
-TO_ADDRESS       = "0x000000000000000000000000000000000000dead"   # payee 주소
-VALUE            = 1000
-VALID_AFTER      = 0
-VALID_BEFORE     = 1798761599   # 2026-12-31T23:59:59Z
-NONCE            = "0x" + "ab" * 32   # 32바이트 hex, 사용마다 새 값
-CHAIN_ID         = 8453              # Base Mainnet (로컬 테스트면 1337)
-TOKEN_CONTRACT   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-TOKEN_NAME       = "USD Coin"
-TOKEN_VERSION    = "2"
-# ─────────────────────────────────────────────────────────────────
-
-typed_data = {
-    "types": {
-        "EIP712Domain": [
-            {"name": "name",              "type": "string"},
-            {"name": "version",           "type": "string"},
-            {"name": "chainId",           "type": "uint256"},
-            {"name": "verifyingContract", "type": "address"},
-        ],
-        "TransferWithAuthorization": [
-            {"name": "from",        "type": "address"},
-            {"name": "to",          "type": "address"},
-            {"name": "value",       "type": "uint256"},
-            {"name": "validAfter",  "type": "uint256"},
-            {"name": "validBefore", "type": "uint256"},
-            {"name": "nonce",       "type": "bytes32"},
-        ],
-    },
-    "primaryType": "TransferWithAuthorization",
-    "domain": {
-        "name":              TOKEN_NAME,
-        "version":           TOKEN_VERSION,
-        "chainId":           CHAIN_ID,
-        "verifyingContract": TOKEN_CONTRACT,
-    },
-    "message": {
-        "from":        FROM_ADDRESS,
-        "to":          TO_ADDRESS,
-        "value":       VALUE,
-        "validAfter":  VALID_AFTER,
-        "validBefore": VALID_BEFORE,
-        "nonce":       bytes.fromhex(NONCE[2:]),
-    },
-}
-
-account = Account.from_key(PRIVATE_KEY)
-signed  = account.sign_typed_data(typed_data)
-
-print(f'"from":        "{FROM_ADDRESS}"')
-print(f'"to":          "{TO_ADDRESS}"')
-print(f'"value":       {VALUE}')
-print(f'"validAfter":  {VALID_AFTER}')
-print(f'"validBefore": {VALID_BEFORE}')
-print(f'"nonce":       "{NONCE}"')
-print(f'"v":           {signed.v}')
-print(f'"r":           "0x{signed.r.to_bytes(32, "big").hex()}"')
-print(f'"s":           "0x{signed.s.to_bytes(32, "big").hex()}"')
+```powershell
+$env:X402_EIP3009_TOKEN_NAME      = "USDC"
+$env:X402_EIP3009_CHAIN_ID        = "84532"
+$env:X402_EIP3009_TOKEN_CONTRACT  = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+$env:X402_FACILITATOR_ENABLED     = "true"
+$env:X402_FACILITATOR_RPC_URL     = "https://sepolia.base.org"
+$env:X402_FACILITATOR_PRIVATE_KEY = "<핫월렛 개인키, 0x 없이>"
+.\gradlew.bat bootRun
 ```
 
-실행:
+> **Base Sepolia 수도꼭지**
+> - ETH (가스비): https://www.alchemy.com/faucets/base-sepolia
+> - USDC: https://faucet.circle.com (Base Sepolia 선택)
 
-```bash
-python generate_sig.py
-```
+#### USDC 컨트랙트 도메인 확인 (선택)
 
-출력 예시:
-
-```
-"from":        "0xabad1fd3fe392a6b45f6a80955263c4575defb91"
-"to":          "0x000000000000000000000000000000000000dead"
-"value":       1000
-"validAfter":  0
-"validBefore": 1798761599
-"nonce":       "0xabab...abab"
-"v":           28
-"r":           "0x1a2b3c..."
-"s":           "0x4d5e6f..."
+```powershell
+node check_domain.js
+# name   : USDC
+# version: 2
+# match: true
 ```
 
 #### C-1. Intent 생성 → 402 Challenge
@@ -402,24 +345,27 @@ Write-Host "PaymentIntentId: $paymentIntentId"
 
 예상: HTTP 402, `$challenge.x402Version = 1`
 
-#### C-2. Authorize (Python 스크립트 출력값 사용)
+#### C-2. 서명 생성 및 Authorize
+
+서명 생성 + 실행 가능한 PowerShell 커맨드 자동 출력:
 
 ```powershell
-$auth = Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/authorize" `
-  -Headers @{ "Content-Type" = "application/json" } `
-  -Body (@{
-    from        = "0xabad1fd3fe392a6b45f6a80955263c4575defb91"
-    to          = "0x000000000000000000000000000000000000dead"
-    value       = 1000
-    validAfter  = 0
-    validBefore = 1798761599
-    nonce       = "0xabab...abab"   # Python 출력값
-    v           = 28                # Python 출력값
-    r           = "0x1a2b3c..."     # Python 출력값
-    s           = "0x4d5e6f..."     # Python 출력값
-  } | ConvertTo-Json) `
+node sign_eip3009.js $paymentIntentId
+```
 
+스크립트가 `Invoke-RestMethod` 커맨드를 출력한다. 그대로 실행하면 된다:
+
+```
+=== EIP-3009 서명 완료 ===
+signer : 0x91ffcbB6f6dC947C01d402eA5703b9D27e8aA363
+nonce  : 0x8f3a...
+v      : 28  r: 0x...  s: 0x...
+
+=== Authorize curl (PowerShell) ===
+Invoke-RestMethod -Method POST -Uri "http://localhost:8081/x402/payment-intents/<id>/authorize" ...
+```
+
+```powershell
 $authorizationId = $auth.id
 Write-Host "AuthorizationId: $authorizationId"
 Write-Host "Status: $($auth.status)"   # PA2_VERIFIED
@@ -460,9 +406,16 @@ Write-Host "Settlement Status: $($settlement.status)"   # PS2_SETTLED
   "id": "<uuid>",
   "paymentIntentId": "<uuid>",
   "authorizationId": "<uuid>",
-  "status": "PS2_SETTLED"
+  "status": "PS2_SETTLED",
+  "txHash": "0x9ec59e2ac252474cd07adb1fdf7eca5d40114d8cee318c04ada9fefc6f1b76f2"
 }
 ```
+
+BaseScan에서 트랜잭션 확인:
+```
+https://sepolia.basescan.org/tx/<txHash>
+```
+USDC 컨트랙트의 `transferWithAuthorization` 호출이 확인되면 온체인 정산 성공이다.
 
 #### C-4. 보호 자원 재접근 (200 OK)
 
@@ -589,55 +542,45 @@ PI4_SETTLED
 
 ---
 
-## TODO — 4단계: Facilitator 외부화
+## 4단계: Facilitator 온체인 브로드캐스트
 
-현재 settlement는 내부 ledger 업데이트만 수행한다. 실제 온체인 결제를 처리하려면 아래 작업이 필요하다.
+Facilitator는 non-custodial 중간 레이어다. 사용자 자산을 보관하지 않고, 미리 서명된 EIP-3009 authorization을 체인에 브로드캐스트하는 역할만 한다.
 
-### 배경
+### 아키텍처
 
-x402 프로토콜에서 **Facilitator**는 non-custodial 중간 레이어로, 두 가지 책임을 분리한다:
+```
+클라이언트 EIP-3009 서명 → x402-payment-service 검증 → FacilitatorClient.settle()
+                                                              │
+                                                              ▼
+                                                   BaseFacilitatorClient
+                                                   - transferWithAuthorization ABI 인코딩
+                                                   - web3j로 nonce + gasPrice 조회
+                                                   - RawTransaction 서명 (EIP-155, chainId)
+                                                   - ethSendRawTransaction → txHash
+```
 
-| 역할 | 설명 |
+### 주요 설계 결정
+
+| 결정 | 이유 |
 |---|---|
-| **Verifier** | EIP-3009 서명의 온체인 유효성 검증 (잔액, nonce, 주소 확인) |
-| **Settler** | 검증된 authorization을 실제 체인에 브로드캐스트 |
+| `@ConditionalOnProperty` — disabled 시 `NoOpFacilitatorClient` | RPC/지갑 없이 테스트 가능 |
+| Legacy `RawTransaction` (EIP-1559 아님) | Base Sepolia 호환성 |
+| txHash를 `PaymentSettlement`에 저장 | 온체인 정산 증거 |
+| Facilitator 호출을 `@Transactional` 내부에서 실행 | 프로토타입 단순화 — 아래 TODO 참조 |
 
-### 구현 항목
+### 네트워크별 설정
 
-**[ ] FacilitatorClient 인터페이스 정의**
-```java
-public interface FacilitatorClient {
-    VerifyResult verify(AuthorizePaymentRequest request);
-    SettleResult settle(UUID paymentIntentId, UUID authorizationId);
-}
-```
+| 네트워크 | Chain ID | USDC 컨트랙트 | Token Name |
+|---|---|---|---|
+| Base Mainnet | `8453` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `USD Coin` |
+| Base Sepolia | `84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | `USDC` |
 
-**[ ] BaseFacilitatorClient 구현**
-- Base RPC 연동 (`eth_call` → USDC 잔액, allowance 확인)
-- `transferWithAuthorization` 트랜잭션 브로드캐스트
-- 트랜잭션 해시 수신 및 저장
+### TODO (프로덕션 준비)
 
-**[ ] X402SettlementService 수정**
-- `ledgerService.settle()` 이후 `facilitatorClient.settle()` 호출
-- 트랜잭션 해시를 `PaymentSettlement`에 저장
-- 외부 시스템 호출이 포함되므로 트랜잭션 경계 재설계 필요
-
-**[ ] 온체인 settlement 상태 추적**
-- `PaymentSettlement`에 `txHash`, `blockNumber`, `onchainStatus` 필드 추가
-- 비동기 confirmation 폴링 또는 webhook 수신
-
-**[ ] 환경변수 추가**
-```
-X402_FACILITATOR_RPC_URL     = https://mainnet.base.org
-X402_FACILITATOR_PRIVATE_KEY = <hot wallet key>
-```
-
-### 참고
-
-- Facilitator는 custodial이 아니어야 함 — 자산을 보관하지 않고 브로드캐스트만 수행
-- verify 단계에서 온체인 잔액 확인 → settle 실패 사전 차단
-- Base Mainnet USDC: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
-- Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- **Outbox 패턴**: Facilitator 호출을 `@Transactional` 밖으로 분리 — 온체인 성공 후 DB 커밋 실패 시 txHash 유실 위험
+- **잔액 사전 확인**: 브로드캐스트 전 payer USDC 잔액 검증
+- **비동기 confirmation**: 브로드캐스트 후 블록 확인 폴링 (현재 fire-and-forget)
+- **가스 추정**: 고정값 `GAS_LIMIT=100_000` 대신 `eth_estimateGas` 사용
 
 ---
 

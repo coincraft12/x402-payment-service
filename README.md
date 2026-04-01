@@ -13,7 +13,7 @@ A payment authorization service based on the x402 protocol. Includes EIP-3009 `t
 | Phase 1 | EIP-3009 signature verification (EIP-712 digest + ecrecover) | ✅ Done |
 | Phase 2 | x402 standard challenge response (`accepts[]`, network, asset contract) | ✅ Done |
 | Phase 3 | PostgreSQL migration (H2 retained for tests) | ✅ Done |
-| Phase 4 | Facilitator externalization (on-chain verify/settle broadcast) | 🔲 TODO |
+| Phase 4 | Facilitator on-chain broadcast (`transferWithAuthorization` via web3j) | ✅ Done |
 
 ---
 
@@ -34,7 +34,9 @@ Client                              x402-payment-service
     │                                       │
     │── POST /capture (authorizationId) ───▶│
     │                                       │ ledger: RESERVE→COMMIT→SETTLE
-    │◀── PS2_SETTLED ───────────────────────│
+    │                                       │ Facilitator: broadcast transferWithAuthorization
+    │                                       │ → txHash stored in PaymentSettlement
+    │◀── PS2_SETTLED + txHash ──────────────│
     │                                       │
     │── GET /x402/protected/report ────────▶│ (same Idempotency-Key)
     │◀── 200 OK + report payload ───────────│
@@ -96,6 +98,9 @@ $env:DB_PASSWORD = "x402"
 | `X402_EIP3009_TOKEN_CONTRACT` | `0xA0b86991...` | USDC contract address |
 | `X402_POLICY_MAX_AMOUNT` | `10000` | Maximum allowed amount per payment |
 | `X402_ALLOWED_MERCHANTS` | `demo-merchant,lab-merchant` | Allowed merchant IDs |
+| `X402_FACILITATOR_ENABLED` | `false` | Enable on-chain broadcast via Facilitator |
+| `X402_FACILITATOR_RPC_URL` | `https://sepolia.base.org` | RPC endpoint for on-chain broadcast |
+| `X402_FACILITATOR_PRIVATE_KEY` | _(empty)_ | Hot wallet private key (no `0x` prefix) |
 
 ---
 
@@ -283,104 +288,42 @@ Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/ledger"
 
 ---
 
-### C. Manual API Tests — Full Payment Flow (Signature Required)
+### C. Manual API Tests — Full Payment Flow with On-Chain Settlement (Base Sepolia)
 
-The authorize step requires an EIP-3009 signature. Use the Python script below to generate one.
+The authorize step requires an EIP-3009 signature. Use the included Node.js script to generate one.
 
 #### Prerequisites
 
-```bash
-pip install web3 eth-account
+Node.js v18+ required.
+
+```powershell
+cd F:\Workplace\x402-payment-service
+npm install
 ```
 
-#### Signature Generation Script
+#### Environment Variables (Base Sepolia)
 
-Save as `generate_sig.py` and run:
-
-```python
-from eth_account import Account
-from eth_account.messages import encode_typed_data
-
-# ── Configuration (replace with real values) ─────────────────────
-PRIVATE_KEY      = "0x4c0883a69102937d6231471b5dbb6e538eba2ef2d28aa3e45bed14d0a37f52ea"
-FROM_ADDRESS     = "0xabad1fd3fe392a6b45f6a80955263c4575defb91"  # address for PRIVATE_KEY
-TO_ADDRESS       = "0x000000000000000000000000000000000000dead"   # payee address
-VALUE            = 1000
-VALID_AFTER      = 0
-VALID_BEFORE     = 1798761599   # 2026-12-31T23:59:59Z
-NONCE            = "0x" + "ab" * 32   # 32-byte hex, use a new value each time
-CHAIN_ID         = 8453              # Base Mainnet (use 1337 for local tests)
-TOKEN_CONTRACT   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-TOKEN_NAME       = "USD Coin"
-TOKEN_VERSION    = "2"
-# ─────────────────────────────────────────────────────────────────
-
-typed_data = {
-    "types": {
-        "EIP712Domain": [
-            {"name": "name",              "type": "string"},
-            {"name": "version",           "type": "string"},
-            {"name": "chainId",           "type": "uint256"},
-            {"name": "verifyingContract", "type": "address"},
-        ],
-        "TransferWithAuthorization": [
-            {"name": "from",        "type": "address"},
-            {"name": "to",          "type": "address"},
-            {"name": "value",       "type": "uint256"},
-            {"name": "validAfter",  "type": "uint256"},
-            {"name": "validBefore", "type": "uint256"},
-            {"name": "nonce",       "type": "bytes32"},
-        ],
-    },
-    "primaryType": "TransferWithAuthorization",
-    "domain": {
-        "name":              TOKEN_NAME,
-        "version":           TOKEN_VERSION,
-        "chainId":           CHAIN_ID,
-        "verifyingContract": TOKEN_CONTRACT,
-    },
-    "message": {
-        "from":        FROM_ADDRESS,
-        "to":          TO_ADDRESS,
-        "value":       VALUE,
-        "validAfter":  VALID_AFTER,
-        "validBefore": VALID_BEFORE,
-        "nonce":       bytes.fromhex(NONCE[2:]),
-    },
-}
-
-account = Account.from_key(PRIVATE_KEY)
-signed  = account.sign_typed_data(typed_data)
-
-print(f'"from":        "{FROM_ADDRESS}"')
-print(f'"to":          "{TO_ADDRESS}"')
-print(f'"value":       {VALUE}')
-print(f'"validAfter":  {VALID_AFTER}')
-print(f'"validBefore": {VALID_BEFORE}')
-print(f'"nonce":       "{NONCE}"')
-print(f'"v":           {signed.v}')
-print(f'"r":           "0x{signed.r.to_bytes(32, "big").hex()}"')
-print(f'"s":           "0x{signed.s.to_bytes(32, "big").hex()}"')
+```powershell
+$env:X402_EIP3009_TOKEN_NAME      = "USDC"
+$env:X402_EIP3009_CHAIN_ID        = "84532"
+$env:X402_EIP3009_TOKEN_CONTRACT  = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+$env:X402_FACILITATOR_ENABLED     = "true"
+$env:X402_FACILITATOR_RPC_URL     = "https://sepolia.base.org"
+$env:X402_FACILITATOR_PRIVATE_KEY = "<your hot wallet private key, no 0x>"
+.\gradlew.bat bootRun
 ```
 
-Run:
+> **Base Sepolia faucets**
+> - ETH (gas): https://www.alchemy.com/faucets/base-sepolia
+> - USDC: https://faucet.circle.com (select Base Sepolia)
 
-```bash
-python generate_sig.py
-```
+#### Verify USDC contract domain (optional sanity check)
 
-Example output:
-
-```
-"from":        "0xabad1fd3fe392a6b45f6a80955263c4575defb91"
-"to":          "0x000000000000000000000000000000000000dead"
-"value":       1000
-"validAfter":  0
-"validBefore": 1798761599
-"nonce":       "0xabab...abab"
-"v":           28
-"r":           "0x1a2b3c..."
-"s":           "0x4d5e6f..."
+```powershell
+node check_domain.js
+# name   : USDC
+# version: 2
+# match: true
 ```
 
 #### C-1. Create Intent → 402 Challenge
@@ -403,24 +346,27 @@ Write-Host "PaymentIntentId: $paymentIntentId"
 
 Expected: HTTP 402, `$challenge.x402Version = 1`
 
-#### C-2. Authorize (using Python script output)
+#### C-2. Sign & Authorize
+
+Generate signature and get ready-to-run PowerShell command:
 
 ```powershell
-$auth = Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/authorize" `
-  -Headers @{ "Content-Type" = "application/json" } `
-  -Body (@{
-    from        = "0xabad1fd3fe392a6b45f6a80955263c4575defb91"
-    to          = "0x000000000000000000000000000000000000dead"
-    value       = 1000
-    validAfter  = 0
-    validBefore = 1798761599
-    nonce       = "0xabab...abab"   # from Python output
-    v           = 28                # from Python output
-    r           = "0x1a2b3c..."     # from Python output
-    s           = "0x4d5e6f..."     # from Python output
-  } | ConvertTo-Json)
+node sign_eip3009.js $paymentIntentId
+```
 
+The script prints an `Invoke-RestMethod` command. Run it directly:
+
+```
+=== EIP-3009 서명 완료 ===
+signer : 0x91ffcbB6f6dC947C01d402eA5703b9D27e8aA363
+nonce  : 0x8f3a...
+v      : 28  r: 0x...  s: 0x...
+
+=== Authorize curl (PowerShell) ===
+Invoke-RestMethod -Method POST -Uri "http://localhost:8081/x402/payment-intents/<id>/authorize" ...
+```
+
+```powershell
 $authorizationId = $auth.id
 Write-Host "AuthorizationId: $authorizationId"
 Write-Host "Status: $($auth.status)"   # PA2_VERIFIED
@@ -461,9 +407,16 @@ Expected response:
   "id": "<uuid>",
   "paymentIntentId": "<uuid>",
   "authorizationId": "<uuid>",
-  "status": "PS2_SETTLED"
+  "status": "PS2_SETTLED",
+  "txHash": "0x9ec59e2ac252474cd07adb1fdf7eca5d40114d8cee318c04ada9fefc6f1b76f2"
 }
 ```
+
+Verify on BaseScan:
+```
+https://sepolia.basescan.org/tx/<txHash>
+```
+The transaction should show a `transferWithAuthorization` call on the USDC contract.
 
 #### C-4. Access Protected Resource (200 OK)
 
@@ -590,55 +543,45 @@ PI4_SETTLED
 
 ---
 
-## TODO — Phase 4: Facilitator Externalization
+## Phase 4: Facilitator On-Chain Broadcast
 
-Current settlement only updates the internal ledger. To process real on-chain payments, the following work is required.
+The Facilitator is a non-custodial middleware layer. It does **not** hold user funds — it only broadcasts pre-signed EIP-3009 authorizations on-chain.
 
-### Background
+### Architecture
 
-In the x402 protocol, the **Facilitator** is a non-custodial middleware layer with two responsibilities:
+```
+Client signs EIP-3009 → x402-payment-service verifies → FacilitatorClient.settle()
+                                                              │
+                                                              ▼
+                                                   BaseFacilitatorClient
+                                                   - encode transferWithAuthorization ABI
+                                                   - get nonce + gasPrice via web3j
+                                                   - sign RawTransaction (EIP-155, chainId)
+                                                   - ethSendRawTransaction → txHash
+```
 
-| Role | Description |
+### Key Design Decisions
+
+| Decision | Reason |
 |---|---|
-| **Verifier** | Validates EIP-3009 signature on-chain (balance, nonce, address) |
-| **Settler** | Broadcasts verified authorization to the chain |
+| `@ConditionalOnProperty` — `NoOpFacilitatorClient` when disabled | Tests run without RPC/wallet |
+| Legacy `RawTransaction` (not EIP-1559) | Base Sepolia compatibility |
+| txHash stored in `PaymentSettlement` | On-chain proof of settlement |
+| Facilitator call inside `@Transactional` | Prototype simplicity — see TODO below |
 
-### Implementation Items
+### Network Config
 
-**[ ] Define FacilitatorClient interface**
-```java
-public interface FacilitatorClient {
-    VerifyResult verify(AuthorizePaymentRequest request);
-    SettleResult settle(UUID paymentIntentId, UUID authorizationId);
-}
-```
+| Network | Chain ID | USDC Contract | Token Name |
+|---|---|---|---|
+| Base Mainnet | `8453` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `USD Coin` |
+| Base Sepolia | `84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | `USDC` |
 
-**[ ] Implement BaseFacilitatorClient**
-- Base RPC integration (`eth_call` → USDC balance, allowance check)
-- Broadcast `transferWithAuthorization` transaction
-- Receive and store transaction hash
+### TODO (Production Readiness)
 
-**[ ] Update X402SettlementService**
-- Call `facilitatorClient.settle()` after `ledgerService.settle()`
-- Store transaction hash in `PaymentSettlement`
-- Redesign transaction boundary since external call is involved
-
-**[ ] Track on-chain settlement status**
-- Add `txHash`, `blockNumber`, `onchainStatus` fields to `PaymentSettlement`
-- Async confirmation polling or webhook
-
-**[ ] Add environment variables**
-```
-X402_FACILITATOR_RPC_URL     = https://mainnet.base.org
-X402_FACILITATOR_PRIVATE_KEY = <hot wallet key>
-```
-
-### Notes
-
-- Facilitator must be non-custodial — broadcast only, no asset custody
-- Verify on-chain balance before settle to prevent settlement failures
-- Base Mainnet USDC: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
-- Base Sepolia USDC: `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- **Outbox pattern**: Facilitator call outside `@Transactional` — txHash loss risk if DB commit fails after on-chain success
+- **Balance pre-check**: Verify payer USDC balance before broadcasting
+- **Async confirmation**: Poll block confirmation after broadcast (currently fire-and-forget)
+- **Gas estimation**: Replace fixed `GAS_LIMIT=100_000` with `eth_estimateGas`
 
 ---
 

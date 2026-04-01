@@ -17,3 +17,7 @@ x402:
     token-name: "USD Coin"
     token-version: "2"
     token-contract: "0x1234567890123456789012345678901234567890"
+  facilitator:
+    enabled: false
+    rpc-url: ""
+    private-key: ""

@@ -10,6 +10,8 @@ import io.coincraft.x402.domain.intent.PaymentIntentStatus;
 import io.coincraft.x402.domain.settlement.PaymentSettlement;
 import io.coincraft.x402.domain.settlement.PaymentSettlementRepository;
 import io.coincraft.x402.domain.settlement.PaymentSettlementStatus;
+import io.coincraft.x402.facilitator.FacilitatorClient;
+import io.coincraft.x402.facilitator.SettleResult;
 import io.coincraft.x402.support.X402InvalidRequestException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +30,7 @@ public class X402SettlementService {
     private final PaymentSettlementRepository settlementRepository;
     private final PaymentAuditLogRepository auditLogRepository;
     private final X402LedgerService ledgerService;
+    private final FacilitatorClient facilitatorClient;
 
     @Transactional
     public PaymentSettlement capture(UUID paymentIntentId, UUID authorizationId) {
@@ -58,6 +61,11 @@ public class X402SettlementService {
         authorizationRepository.save(authorization);
 
         ledgerService.settle(intent);
+
+        // Facilitator: 온체인 transferWithAuthorization 브로드캐스트
+        SettleResult settleResult = facilitatorClient.settle(authorization);
+        settlement.recordTxHash(settleResult.txHash());
+
         settlement.transitionTo(PaymentSettlementStatus.PS2_SETTLED);
         settlement = settlementRepository.save(settlement);
 
@@ -66,8 +74,8 @@ public class X402SettlementService {
 
         auditLogRepository.save(PaymentAuditLog.of(paymentIntentId, true, "settlement.completed", "SETTLEMENT_COMPLETED"));
 
-        log.info("event=x402.settlement.completed paymentIntentId={} authorizationId={} settlementId={}",
-                paymentIntentId, authorizationId, settlement.getId());
+        log.info("event=x402.settlement.completed paymentIntentId={} authorizationId={} settlementId={} txHash={}",
+                paymentIntentId, authorizationId, settlement.getId(), settleResult.txHash());
 
         return settlement;
     }

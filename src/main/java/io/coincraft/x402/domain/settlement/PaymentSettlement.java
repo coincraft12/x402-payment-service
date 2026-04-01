@@ -35,6 +35,10 @@ public class PaymentSettlement {
     @Column(nullable = false, length = 32)
     private PaymentSettlementStatus status;
 
+    /** 온체인 트랜잭션 해시 — Facilitator 브로드캐스트 후 설정. NoOp 모드에서는 더미값. */
+    @Column(length = 66)
+    private String txHash;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -55,6 +59,11 @@ public class PaymentSettlement {
 
     public void transitionTo(PaymentSettlementStatus next) {
         this.status = next;
+        this.updatedAt = Instant.now();
+    }
+
+    public void recordTxHash(String txHash) {
+        this.txHash = txHash;
         this.updatedAt = Instant.now();
     }
 }

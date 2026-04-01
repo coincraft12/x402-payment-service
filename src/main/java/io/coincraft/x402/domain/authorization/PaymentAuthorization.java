@@ -55,9 +55,17 @@ public class PaymentAuthorization {
     @Column(nullable = false, length = 64)
     private String digest;
 
-    /** raw signature (v|r|s JSON 직렬화) */
-    @Column(nullable = false, length = 512)
-    private String signature;
+    /** ECDSA signature v (27 or 28) */
+    @Column(nullable = false)
+    private int sigV;
+
+    /** ECDSA signature r (0x + 64 hex) */
+    @Column(nullable = false, length = 66)
+    private String sigR;
+
+    /** ECDSA signature s (0x + 64 hex) */
+    @Column(nullable = false, length = 66)
+    private String sigS;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
@@ -81,7 +89,9 @@ public class PaymentAuthorization {
             long validBefore,
             String nonce,
             String digest,
-            String signature
+            int sigV,
+            String sigR,
+            String sigS
     ) {
         Instant now = Instant.now();
         return PaymentAuthorization.builder()
@@ -93,7 +103,9 @@ public class PaymentAuthorization {
                 .validBefore(validBefore)
                 .nonce(nonce)
                 .digest(digest)
-                .signature(signature)
+                .sigV(sigV)
+                .sigR(sigR)
+                .sigS(sigS)
                 .status(PaymentAuthorizationStatus.PA0_ISSUED)
                 .consumed(false)
                 .createdAt(now)
