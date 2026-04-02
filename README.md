@@ -21,23 +21,23 @@ A payment authorization service based on the x402 protocol. Includes EIP-3009 `t
 
 ```
 Client                              x402-payment-service
-    │                                       │
+    │                                        │
     │── GET /x402/protected/report ────────▶│
-    │                                       │ Create PaymentIntent
+    │                                        │ Create PaymentIntent
     │◀── 402 + accepts[] + paymentIntentId ─│
-    │                                       │
+    │                                        │
     │── POST /authorize (EIP-3009 sig) ────▶│
-    │                                       │ Verify EIP-712 digest
-    │                                       │ ecrecover → verify from address
-    │                                       │ Replay guard (nonce + digest)
+    │                                        │ Verify EIP-712 digest
+    │                                        │ ecrecover → verify from address
+    │                                        │ Replay guard (nonce + digest)
     │◀── PA2_VERIFIED + authorizationId ────│
-    │                                       │
+    │                                        │
     │── POST /capture (authorizationId) ───▶│
-    │                                       │ ledger: RESERVE→COMMIT→SETTLE
-    │                                       │ Facilitator: broadcast transferWithAuthorization
-    │                                       │ → txHash stored in PaymentSettlement
+    │                                        │ ledger: RESERVE→COMMIT→SETTLE
+    │                                        │ Facilitator: broadcast transferWithAuthorization
+    │                                        │ → txHash stored in PaymentSettlement
     │◀── PS2_SETTLED + txHash ──────────────│
-    │                                       │
+    │                                        │
     │── GET /x402/protected/report ────────▶│ (same Idempotency-Key)
     │◀── 200 OK + report payload ───────────│
 ```
