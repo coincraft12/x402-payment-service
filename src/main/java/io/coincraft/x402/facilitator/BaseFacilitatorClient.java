@@ -21,11 +21,12 @@ import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
 import org.web3j.protocol.http.HttpService;
 import org.web3j.utils.Numeric;
+import okhttp3.OkHttpClient;
 
 import java.math.BigInteger;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Base 네트워크용 Facilitator 구현체.
@@ -57,7 +58,11 @@ public class BaseFacilitatorClient implements FacilitatorClient {
 
     @PostConstruct
     public void init() {
-        this.web3j = Web3j.build(new HttpService(facilitatorProps.rpcUrl()));
+        OkHttpClient httpClient = new OkHttpClient.Builder()
+                .connectTimeout(facilitatorProps.connectTimeout())
+                .readTimeout(facilitatorProps.readTimeout())
+                .build();
+        this.web3j = Web3j.build(new HttpService(facilitatorProps.rpcUrl(), httpClient, false));
         this.credentials = Credentials.create(facilitatorProps.privateKey());
         log.info("event=facilitator.initialized hotWallet={} rpcUrl={} chainId={}",
                 credentials.getAddress(), facilitatorProps.rpcUrl(), eip3009Props.chainId());
@@ -65,46 +70,70 @@ public class BaseFacilitatorClient implements FacilitatorClient {
 
     @Override
     public SettleResult settle(PaymentAuthorization authorization) {
-        try {
-            String encodedData = encodeTransferWithAuthorization(authorization);
-
-            BigInteger nonce = web3j
-                    .ethGetTransactionCount(credentials.getAddress(), DefaultBlockParameterName.LATEST)
-                    .send()
-                    .getTransactionCount();
-
-            BigInteger gasPrice = web3j.ethGasPrice().send().getGasPrice();
-
-            RawTransaction rawTx = RawTransaction.createTransaction(
-                    nonce,
-                    gasPrice,
-                    GAS_LIMIT,
-                    eip3009Props.tokenContract(),
-                    BigInteger.ZERO,
-                    encodedData
-            );
-
-            byte[] signed = TransactionEncoder.signMessage(rawTx, eip3009Props.chainId(), credentials);
-
-            EthSendTransaction response = web3j
-                    .ethSendRawTransaction(Numeric.toHexString(signed))
-                    .send();
-
-            if (response.hasError()) {
-                throw new RuntimeException("on-chain settle failed: " + response.getError().getMessage());
+        int maxAttempts = Math.max(1, facilitatorProps.maxRetries());
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                String txHash = settleOnce(authorization);
+                log.info("event=facilitator.settle.broadcasted txHash={} authorizationId={} payer={} to={} value={} attempt={}",
+                        txHash, authorization.getId(), authorization.getPayer(),
+                        authorization.getPayee(), authorization.getValue(), attempt);
+                return new SettleResult(txHash);
+            } catch (IllegalStateException e) {
+                log.error("event=facilitator.settle.failed authorizationId={} attempt={} error={}",
+                        authorization.getId(), attempt, e.getMessage());
+                throw e;
+            } catch (Exception e) {
+                log.warn("event=facilitator.settle.retry authorizationId={} attempt={} maxAttempts={} error={}",
+                        authorization.getId(), attempt, maxAttempts, e.getMessage());
+                if (attempt == maxAttempts) {
+                    log.error("event=facilitator.settle.failed authorizationId={} error={}",
+                            authorization.getId(), e.getMessage());
+                    throw new RuntimeException("Facilitator settle failed", e);
+                }
+                sleepBeforeRetry();
             }
+        }
+        throw new IllegalStateException("unreachable facilitator retry state");
+    }
 
-            String txHash = response.getTransactionHash();
-            log.info("event=facilitator.settle.broadcasted txHash={} authorizationId={} payer={} to={} value={}",
-                    txHash, authorization.getId(), authorization.getPayer(),
-                    authorization.getPayee(), authorization.getValue());
+    private String settleOnce(PaymentAuthorization authorization) throws Exception {
+        String encodedData = encodeTransferWithAuthorization(authorization);
 
-            return new SettleResult(txHash);
+        BigInteger nonce = web3j
+                .ethGetTransactionCount(credentials.getAddress(), DefaultBlockParameterName.LATEST)
+                .send()
+                .getTransactionCount();
 
-        } catch (Exception e) {
-            log.error("event=facilitator.settle.failed authorizationId={} error={}",
-                    authorization.getId(), e.getMessage());
-            throw new RuntimeException("Facilitator settle failed", e);
+        BigInteger gasPrice = web3j.ethGasPrice().send().getGasPrice();
+
+        RawTransaction rawTx = RawTransaction.createTransaction(
+                nonce,
+                gasPrice,
+                GAS_LIMIT,
+                eip3009Props.tokenContract(),
+                BigInteger.ZERO,
+                encodedData
+        );
+
+        byte[] signed = TransactionEncoder.signMessage(rawTx, eip3009Props.chainId(), credentials);
+
+        EthSendTransaction response = web3j
+                .ethSendRawTransaction(Numeric.toHexString(signed))
+                .send();
+
+        if (response.hasError()) {
+            throw new IllegalStateException("on-chain settle failed: " + response.getError().getMessage());
+        }
+
+        return response.getTransactionHash();
+    }
+
+    private void sleepBeforeRetry() {
+        try {
+            Thread.sleep(facilitatorProps.retryBackoff().toMillis());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Facilitator retry interrupted", e);
         }
     }
 

@@ -14,6 +14,7 @@ import io.coincraft.x402.orchestration.policy.X402PolicyContext;
 import io.coincraft.x402.orchestration.policy.X402PolicyEngine;
 import io.coincraft.x402.support.Eip3009Verifier;
 import io.coincraft.x402.support.X402InvalidRequestException;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class X402AuthorizationService {
     private final X402ReplayGuardService replayGuardService;
     private final Eip3009Verifier eip3009Verifier;
     private final X402LedgerService ledgerService;
+    private final MeterRegistry meterRegistry;
 
     @Transactional
     public PaymentAuthorization authorize(UUID paymentIntentId, AuthorizePaymentRequest request) {
@@ -62,6 +64,7 @@ public class X402AuthorizationService {
                 intentRepository.save(intent);
             }
             auditLogRepository.save(PaymentAuditLog.of(intent.getId(), false, "authorization.rejected", decision.reason()));
+            meterRegistry.counter("x402.payment.authorization.rejected", "reason", decision.reason()).increment();
             throw new X402InvalidRequestException(decision.reason());
         }
 
@@ -89,6 +92,7 @@ public class X402AuthorizationService {
 
         log.info("event=x402.authorization.verified paymentIntentId={} authorizationId={} digest={}",
                 intent.getId(), authorization.getId(), authorization.getDigest());
+        meterRegistry.counter("x402.payment.authorization.verified").increment();
 
         return authorization;
     }

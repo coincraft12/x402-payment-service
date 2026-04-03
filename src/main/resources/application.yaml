@@ -1,6 +1,9 @@
 spring:
   application:
     name: x402-payment-service
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/x402}
     driver-class-name: org.postgresql.Driver
@@ -11,7 +14,7 @@ spring:
       connection-timeout: 30000
   jpa:
     hibernate:
-      ddl-auto: ${JPA_DDL_AUTO:update}
+      ddl-auto: ${JPA_DDL_AUTO:validate}
     show-sql: false
     properties:
       hibernate:
@@ -31,6 +34,10 @@ x402:
     enabled: ${X402_FACILITATOR_ENABLED:false}
     rpc-url: ${X402_FACILITATOR_RPC_URL:https://sepolia.base.org}
     private-key: ${X402_FACILITATOR_PRIVATE_KEY:}
+    connect-timeout: ${X402_FACILITATOR_CONNECT_TIMEOUT:5s}
+    read-timeout: ${X402_FACILITATOR_READ_TIMEOUT:20s}
+    max-retries: ${X402_FACILITATOR_MAX_RETRIES:3}
+    retry-backoff: ${X402_FACILITATOR_RETRY_BACKOFF:1s}
   challenge:
     report:
       merchant-id: ${X402_CHALLENGE_REPORT_MERCHANT_ID:demo-merchant}
@@ -38,5 +45,15 @@ x402:
       asset: ${X402_CHALLENGE_REPORT_ASSET:USDC}
       amount: ${X402_CHALLENGE_REPORT_AMOUNT:1000}
       payee: ${X402_CHALLENGE_REPORT_PAYEE:merchant-vault}
+  security:
+    api-key: ${X402_API_KEY:change-me}
 server:
   port: 8081
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized

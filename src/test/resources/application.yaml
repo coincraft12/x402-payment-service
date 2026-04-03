@@ -1,4 +1,6 @@
 spring:
+  flyway:
+    enabled: true
   datasource:
     url: jdbc:h2:mem:x402test;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
@@ -6,7 +8,7 @@ spring:
     password:
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: validate
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect
@@ -24,3 +26,5 @@ x402:
   challenge:
     report:
       payee: "0x000000000000000000000000000000000000dead"
+  security:
+    api-key: "test-api-key"

@@ -29,6 +29,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class READMEExamplesIntegrationTest {
 
+    private static final String TEST_API_KEY = "test-api-key";
+
     /** 테스트 전용 고정 private key (절대 실제 환경에 사용 금지) */
     private static final String TEST_PRIVATE_KEY =
             "4c0883a69102937d6231471b5dbb6e538eba2ef2d28aa3e45bed14d0a37f52ea";
@@ -158,18 +160,21 @@ class READMEExamplesIntegrationTest {
 
         assertThat(settlement.get("status").asText()).isEqualTo("PS2_SETTLED");
 
-        mockMvc.perform(get("/x402/payment-intents/{id}", paymentIntentId))
+        mockMvc.perform(get("/x402/payment-intents/{id}", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("PI4_SETTLED"));
 
-        mockMvc.perform(get("/x402/payment-intents/{id}/audits", paymentIntentId))
+        mockMvc.perform(get("/x402/payment-intents/{id}/audits", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].eventType").value("intent.created"))
                 .andExpect(jsonPath("$[1].eventType").value("policy.evaluated"))
                 .andExpect(jsonPath("$[2].eventType").value("authorization.verified"))
                 .andExpect(jsonPath("$[3].eventType").value("settlement.completed"));
 
-        mockMvc.perform(get("/x402/payment-intents/{id}/ledger", paymentIntentId))
+        mockMvc.perform(get("/x402/payment-intents/{id}/ledger", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].type").value("RESERVE"))
                 .andExpect(jsonPath("$[1].type").value("COMMIT"))
@@ -199,7 +204,8 @@ class READMEExamplesIntegrationTest {
         String paymentIntentId = intent.get("id").asText();
         assertThat(intent.get("status").asText()).isEqualTo("PI9_REJECTED");
 
-        mockMvc.perform(get("/x402/payment-intents/{id}/audits", paymentIntentId))
+        mockMvc.perform(get("/x402/payment-intents/{id}/audits", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[1].reason").value("MERCHANT_NOT_ALLOWED: unknown-merchant"));
     }
@@ -218,7 +224,8 @@ class READMEExamplesIntegrationTest {
         String paymentIntentId = intent.get("id").asText();
         assertThat(intent.get("status").asText()).isEqualTo("PI9_REJECTED");
 
-        mockMvc.perform(get("/x402/payment-intents/{id}/audits", paymentIntentId))
+        mockMvc.perform(get("/x402/payment-intents/{id}/audits", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[1].reason").value("ENDPOINT_AMOUNT_LIMIT_EXCEEDED: max=10000, requested=999999"));
     }
@@ -234,6 +241,7 @@ class READMEExamplesIntegrationTest {
         postJson("/x402/payment-intents/" + firstPaymentIntentId + "/authorize", authBody, null);
 
         mockMvc.perform(post("/x402/payment-intents/{id}/authorize", secondPaymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(authBody))
                 .andExpect(status().isBadRequest())
@@ -246,6 +254,7 @@ class READMEExamplesIntegrationTest {
         String paymentIntentId = createReadmeStyleIntent("readme-expired-" + UUID.randomUUID());
 
         mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(buildAuthRequestJson(1000, pastDeadline(), randomNonce())))
                 .andExpect(status().isBadRequest())
@@ -258,6 +267,7 @@ class READMEExamplesIntegrationTest {
         String paymentIntentId = createReadmeStyleIntent("readme-mismatch-" + UUID.randomUUID());
 
         mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(buildAuthRequestJson(999, futureDeadline(), randomNonce())))
                 .andExpect(status().isBadRequest())
@@ -277,6 +287,7 @@ class READMEExamplesIntegrationTest {
         );
 
         mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(buildAuthRequestJson(1000, futureDeadline(), randomNonce())))
                 .andExpect(status().isBadRequest())
@@ -307,6 +318,7 @@ class READMEExamplesIntegrationTest {
         );
 
         mockMvc.perform(post("/x402/payment-intents/{id}/capture", paymentIntentId)
+                        .header("X-API-Key", TEST_API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -391,6 +403,9 @@ class READMEExamplesIntegrationTest {
 
         if (idempotencyKey != null) {
             request.header("Idempotency-Key", idempotencyKey);
+        }
+        if (path.startsWith("/x402/payment-intents")) {
+            request.header("X-API-Key", TEST_API_KEY);
         }
 
         MvcResult result = mockMvc.perform(request)

@@ -12,6 +12,7 @@ import io.coincraft.x402.orchestration.policy.X402PolicyContext;
 import io.coincraft.x402.orchestration.policy.X402PolicyEngine;
 import io.coincraft.x402.support.X402IdempotencyConflictException;
 import io.coincraft.x402.support.X402InvalidRequestException;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ public class X402PaymentService {
     private final X402PolicyEngine policyEngine;
     private final X402LedgerService ledgerService;
     private final TransactionTemplate transactionTemplate;
+    private final MeterRegistry meterRegistry;
     private final ConcurrentHashMap<String, ReentrantLock> idempotencyLocks = new ConcurrentHashMap<>();
 
     public PaymentIntent createOrGet(String idempotencyKey, CreatePaymentIntentRequest request) {
@@ -52,6 +54,9 @@ public class X402PaymentService {
             return result;
         } finally {
             lock.unlock();
+            if (!lock.hasQueuedThreads()) {
+                idempotencyLocks.remove(lockKey, lock);
+            }
         }
     }
 
@@ -90,6 +95,7 @@ public class X402PaymentService {
 
         if (!decision.allowed()) {
             intent.transitionTo(PaymentIntentStatus.PI9_REJECTED);
+            meterRegistry.counter("x402.payment.intent.rejected", "reason", decision.reason()).increment();
             return intentRepository.save(intent);
         }
 
@@ -98,6 +104,7 @@ public class X402PaymentService {
 
         log.info("event=x402.intent.created paymentIntentId={} merchantId={} endpoint={} amount={} status={}",
                 intent.getId(), intent.getMerchantId(), intent.getEndpoint(), intent.getAmount(), intent.getStatus());
+        meterRegistry.counter("x402.payment.intent.created").increment();
 
         return intent;
     }

@@ -13,6 +13,7 @@ import io.coincraft.x402.domain.settlement.PaymentSettlementStatus;
 import io.coincraft.x402.facilitator.FacilitatorClient;
 import io.coincraft.x402.facilitator.SettleResult;
 import io.coincraft.x402.support.X402InvalidRequestException;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ public class X402SettlementService {
     private final PaymentAuditLogRepository auditLogRepository;
     private final X402LedgerService ledgerService;
     private final FacilitatorClient facilitatorClient;
+    private final MeterRegistry meterRegistry;
 
     @Transactional
     public PaymentSettlement capture(UUID paymentIntentId, UUID authorizationId) {
@@ -91,6 +93,7 @@ public class X402SettlementService {
 
         log.info("event=x402.settlement.completed paymentIntentId={} authorizationId={} settlementId={} txHash={}",
                 paymentIntentId, authorizationId, settlement.getId(), settleResult.txHash());
+        meterRegistry.counter("x402.payment.settlement.completed").increment();
 
         return settlement;
     }

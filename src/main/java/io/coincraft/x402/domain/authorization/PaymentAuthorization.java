@@ -56,15 +56,15 @@ public class PaymentAuthorization {
     private String digest;
 
     /** ECDSA signature v (27 or 28) */
-    @Column(nullable = false)
+    @Column(name = "sig_v", nullable = false)
     private int sigV;
 
     /** ECDSA signature r (0x + 64 hex) */
-    @Column(nullable = false, length = 66)
+    @Column(name = "sig_r", nullable = false, length = 66)
     private String sigR;
 
     /** ECDSA signature s (0x + 64 hex) */
-    @Column(nullable = false, length = 66)
+    @Column(name = "sig_s", nullable = false, length = 66)
     private String sigS;
 
     @Enumerated(EnumType.STRING)
