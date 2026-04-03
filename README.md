@@ -583,6 +583,14 @@ Client signs EIP-3009 → x402-payment-service verifies → FacilitatorClient.se
 - **Async confirmation**: Poll block confirmation after broadcast (currently fire-and-forget)
 - **Gas estimation**: Replace fixed `GAS_LIMIT=100_000` with `eth_estimateGas`
 
+### TODO (Design Decisions Required)
+
+- **Settlement architecture**: Decide whether to move settlement to an outbox-driven async workflow or keep synchronous capture with a compensating strategy
+- **Key management**: Decide whether the Facilitator signer remains env-var based for non-production only, or moves to KMS/HSM-backed signing in production
+- **Authorization model**: Define who can call `create`, `authorize`, `capture`, `status`, `audits`, and `ledger`, and whether that access is API key, service-to-service auth, wallet proof, or a mixed model
+- **On-chain finality policy**: Decide whether settlement success means tx broadcast, first inclusion, or N-block confirmation
+- **Retry and replay operations policy**: Define how failed settlements are retried, who can trigger replay/recovery, and what audit trail is required for manual intervention
+
 ---
 
 ## Related Repositories
