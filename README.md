@@ -95,7 +95,7 @@ $env:DB_PASSWORD = "x402"
 | `X402_EIP3009_CHAIN_ID` | `8453` | EIP-712 domain chain ID (Base Mainnet) |
 | `X402_EIP3009_TOKEN_NAME` | `USD Coin` | EIP-712 domain token name |
 | `X402_EIP3009_TOKEN_VERSION` | `2` | EIP-712 domain token version |
-| `X402_EIP3009_TOKEN_CONTRACT` | `0xA0b86991...` | USDC contract address |
+| `X402_EIP3009_TOKEN_CONTRACT` | `0x833589fC...` | Base Mainnet USDC contract address |
 | `X402_POLICY_MAX_AMOUNT` | `10000` | Maximum allowed amount per payment |
 | `X402_ALLOWED_MERCHANTS` | `demo-merchant,lab-merchant` | Allowed merchant IDs |
 | `X402_FACILITATOR_ENABLED` | `false` | Enable on-chain broadcast via Facilitator |
@@ -197,7 +197,7 @@ Expected response (HTTP 402):
     "network": "base-mainnet",
     "maxAmountRequired": "1000",
     "resource": "/x402/protected/report",
-    "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "payTo": "merchant-vault",
     "maxTimeoutSeconds": 300,
     "extra": { "name": "USD Coin", "version": "2" }
@@ -479,7 +479,7 @@ Invoke-RestMethod -Uri "$BASE_URL/x402/payment-intents/$paymentIntentId/ledger"
       "mimeType": "application/json",
       "payTo": "merchant-vault",
       "maxTimeoutSeconds": 300,
-      "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "extra": {
         "name": "USD Coin",
         "version": "2"

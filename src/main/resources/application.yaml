@@ -23,7 +23,7 @@ x402:
     chain-id: ${X402_EIP3009_CHAIN_ID:8453}
     token-name: ${X402_EIP3009_TOKEN_NAME:USD Coin}
     token-version: ${X402_EIP3009_TOKEN_VERSION:2}
-    token-contract: ${X402_EIP3009_TOKEN_CONTRACT:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48}
+    token-contract: ${X402_EIP3009_TOKEN_CONTRACT:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913}
   policy:
     max-amount: ${X402_POLICY_MAX_AMOUNT:10000}
     allowed-merchants: ${X402_ALLOWED_MERCHANTS:demo-merchant,lab-merchant}
