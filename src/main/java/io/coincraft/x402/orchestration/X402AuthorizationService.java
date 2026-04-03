@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigInteger;
 import java.util.UUID;
 
 @Service
@@ -40,6 +41,7 @@ public class X402AuthorizationService {
                 .orElseThrow(() -> new X402InvalidRequestException("payment intent not found: " + paymentIntentId));
 
         validateAuthorizeRequest(request);
+        validateAuthorizationMatchesIntent(intent, request);
 
         // EIP-3009 서명 검증 — 실패 시 X402InvalidRequestException throw
         eip3009Verifier.verify(request);
@@ -112,6 +114,22 @@ public class X402AuthorizationService {
         if (request.r() == null || request.s() == null) {
             throw new X402InvalidRequestException("signature r,s are required");
         }
+    }
+
+    private void validateAuthorizationMatchesIntent(PaymentIntent intent, AuthorizePaymentRequest request) {
+        if (!normalizeAddress(intent.getPayer()).equals(normalizeAddress(request.from()))) {
+            throw new X402InvalidRequestException("AUTHORIZATION_PAYER_MISMATCH");
+        }
+        if (!normalizeAddress(intent.getPayee()).equals(normalizeAddress(request.to()))) {
+            throw new X402InvalidRequestException("AUTHORIZATION_PAYEE_MISMATCH");
+        }
+        if (!BigInteger.valueOf(intent.getAmount()).equals(request.value())) {
+            throw new X402InvalidRequestException("AUTHORIZATION_AMOUNT_MISMATCH");
+        }
+    }
+
+    private static String normalizeAddress(String address) {
+        return address == null ? "" : address.trim().toLowerCase();
     }
 
     /** bytes32 nonce를 0x 없는 소문자 hex 64자로 정규화 */

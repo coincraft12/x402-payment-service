@@ -21,3 +21,6 @@ x402:
     enabled: false
     rpc-url: ""
     private-key: ""
+  challenge:
+    report:
+      payee: "0x000000000000000000000000000000000000dead"

@@ -37,6 +37,19 @@ class READMEExamplesIntegrationTest {
     private static String testFromAddress;
     private static final String TEST_TO_ADDRESS = "0x000000000000000000000000000000000000dead";
 
+    private static String standardIntentRequestBody(long amount) {
+        return """
+                {
+                  "merchantId": "demo-merchant",
+                  "endpoint": "/premium/report",
+                  "asset": "USDC",
+                  "amount": %d,
+                  "payer": "%s",
+                  "payee": "%s"
+                }
+                """.formatted(amount, testFromAddress, TEST_TO_ADDRESS);
+    }
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -116,16 +129,7 @@ class READMEExamplesIntegrationTest {
 
         JsonNode intent = postJson(
                 "/x402/payment-intents",
-                """
-                {
-                  "merchantId": "demo-merchant",
-                  "endpoint": "/premium/report",
-                  "asset": "USDC",
-                  "amount": 1000,
-                  "payer": "agent-1",
-                  "payee": "merchant-vault"
-                }
-                """,
+                standardIntentRequestBody(1000),
                 idempotencyKey
         );
 
@@ -207,16 +211,7 @@ class READMEExamplesIntegrationTest {
 
         JsonNode intent = postJson(
                 "/x402/payment-intents",
-                """
-                {
-                  "merchantId": "demo-merchant",
-                  "endpoint": "/premium/report",
-                  "asset": "USDC",
-                  "amount": 999999,
-                  "payer": "agent-1",
-                  "payee": "merchant-vault"
-                }
-                """,
+                standardIntentRequestBody(999999),
                 idempotencyKey
         );
 
@@ -257,13 +252,25 @@ class READMEExamplesIntegrationTest {
     }
 
     @Test
+    @DisplayName("Authorization request must match the payment intent")
+    void authorizationMustMatchIntent() throws Exception {
+        String paymentIntentId = createReadmeStyleIntent("readme-mismatch-" + UUID.randomUUID());
+
+        mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(buildAuthRequestJson(999, futureDeadline(), randomNonce())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("AUTHORIZATION_AMOUNT_MISMATCH"));
+    }
+
+    @Test
     @DisplayName("README - 빠른 시작 / PowerShell 예제 1~5. 보호 자원 접근 -> 402 challenge -> authorize -> capture -> 200 OK")
     void readme_quickStart_challengeAuthorizeCaptureAndProtectedResourceAccess() throws Exception {
         String idempotencyKey = "readme-challenge-" + UUID.randomUUID();
 
         MvcResult challengeResult = mockMvc.perform(get("/x402/protected/report")
                         .header("Idempotency-Key", idempotencyKey)
-                        .header("X-Payer", "agent-1"))
+                        .header("X-Payer", testFromAddress))
                 .andExpect(status().is(402))
                 .andExpect(jsonPath("$.x402Version").value(1))
                 .andExpect(jsonPath("$.error").value("X402 Payment Required"))
@@ -279,7 +286,7 @@ class READMEExamplesIntegrationTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("X-Payment-Endpoint", "/x402/protected/report"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("X-Payment-Asset", "USDC"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("X-Payment-Amount", "1000"))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("X-Payment-Payer", "agent-1"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("X-Payment-Payer", testFromAddress))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().exists("X-Payment-Intent-Id"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Link", org.hamcrest.Matchers.containsString("rel=\"authorize\"")))
                 .andReturn();
@@ -305,7 +312,7 @@ class READMEExamplesIntegrationTest {
 
         mockMvc.perform(get("/x402/protected/report")
                         .header("Idempotency-Key", idempotencyKey)
-                        .header("X-Payer", "agent-1"))
+                        .header("X-Payer", testFromAddress))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessGranted").value(true))
                 .andExpect(jsonPath("$.reportId").value("premium-report-001"))
@@ -317,16 +324,7 @@ class READMEExamplesIntegrationTest {
     private String createReadmeStyleIntent(String idempotencyKey) throws Exception {
         JsonNode intent = postJson(
                 "/x402/payment-intents",
-                """
-                {
-                  "merchantId": "demo-merchant",
-                  "endpoint": "/premium/report",
-                  "asset": "USDC",
-                  "amount": 1000,
-                  "payer": "agent-1",
-                  "payee": "merchant-vault"
-                }
-                """,
+                standardIntentRequestBody(1000),
                 idempotencyKey
         );
         return intent.get("id").asText();
