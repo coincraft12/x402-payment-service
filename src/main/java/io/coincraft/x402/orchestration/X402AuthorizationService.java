@@ -40,6 +40,7 @@ public class X402AuthorizationService {
         PaymentIntent intent = intentRepository.findById(paymentIntentId)
                 .orElseThrow(() -> new X402InvalidRequestException("payment intent not found: " + paymentIntentId));
 
+        validateIntentReadyForAuthorization(intent);
         validateAuthorizeRequest(request);
         validateAuthorizationMatchesIntent(intent, request);
 
@@ -113,6 +114,24 @@ public class X402AuthorizationService {
         }
         if (request.r() == null || request.s() == null) {
             throw new X402InvalidRequestException("signature r,s are required");
+        }
+    }
+
+    private void validateIntentReadyForAuthorization(PaymentIntent intent) {
+        if (intent.getStatus() == PaymentIntentStatus.PI2_AUTHORIZED
+                || intent.getStatus() == PaymentIntentStatus.PI3_CAPTURED
+                || intent.getStatus() == PaymentIntentStatus.PI4_SETTLED) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_ALREADY_AUTHORIZED");
+        }
+        if (intent.getStatus() == PaymentIntentStatus.PI9_REJECTED
+                || intent.getStatus() == PaymentIntentStatus.PI10_EXPIRED) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_NOT_AUTHORIZABLE");
+        }
+        if (intent.getStatus() != PaymentIntentStatus.PI1_POLICY_CHECKED) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_NOT_READY_FOR_AUTHORIZATION");
+        }
+        if (authorizationRepository.existsByPaymentIntentId(intent.getId())) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_ALREADY_AUTHORIZED");
         }
     }
 

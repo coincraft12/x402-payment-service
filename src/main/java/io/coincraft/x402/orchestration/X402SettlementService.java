@@ -43,8 +43,23 @@ public class X402SettlementService {
         if (!authorization.getPaymentIntentId().equals(paymentIntentId)) {
             throw new X402InvalidRequestException("authorization does not belong to payment intent");
         }
+        if (intent.getStatus() == PaymentIntentStatus.PI4_SETTLED) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_ALREADY_SETTLED");
+        }
+        if (intent.getStatus() == PaymentIntentStatus.PI3_CAPTURED) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_CAPTURE_IN_PROGRESS");
+        }
+        if (intent.getStatus() != PaymentIntentStatus.PI2_AUTHORIZED) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_NOT_READY_FOR_CAPTURE");
+        }
         if (authorization.isConsumed()) {
             throw new X402InvalidRequestException("authorization already consumed");
+        }
+        if (settlementRepository.existsByPaymentIntentId(paymentIntentId)) {
+            throw new X402InvalidRequestException("PAYMENT_INTENT_ALREADY_CAPTURED");
+        }
+        if (settlementRepository.existsByAuthorizationId(authorizationId)) {
+            throw new X402InvalidRequestException("AUTHORIZATION_ALREADY_CAPTURED");
         }
 
         PaymentSettlement settlement = PaymentSettlement.reserved(paymentIntentId, authorizationId);

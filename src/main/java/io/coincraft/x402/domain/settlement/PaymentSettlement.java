@@ -9,8 +9,8 @@ import java.util.UUID;
 @Entity
 @Table(name = "x402_payment_settlements",
         indexes = {
-                @Index(name = "idx_x402_settlement_intent", columnList = "paymentIntentId"),
-                @Index(name = "idx_x402_settlement_auth", columnList = "authorizationId")
+                @Index(name = "idx_x402_settlement_intent", columnList = "paymentIntentId", unique = true),
+                @Index(name = "idx_x402_settlement_auth", columnList = "authorizationId", unique = true)
         })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

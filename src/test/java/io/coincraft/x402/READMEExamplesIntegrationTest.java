@@ -226,13 +226,14 @@ class READMEExamplesIntegrationTest {
     @Test
     @DisplayName("README - 실패 시나리오 예제 3. Authorization replay")
     void readme_failureExample_authorizationReplay() throws Exception {
-        String paymentIntentId = createReadmeStyleIntent("readme-replay-" + UUID.randomUUID());
+        String firstPaymentIntentId = createReadmeStyleIntent("readme-replay-1-" + UUID.randomUUID());
+        String secondPaymentIntentId = createReadmeStyleIntent("readme-replay-2-" + UUID.randomUUID());
         String nonce = randomNonce();
         String authBody = buildAuthRequestJson(1000, futureDeadline(), nonce);
 
-        postJson("/x402/payment-intents/" + paymentIntentId + "/authorize", authBody, null);
+        postJson("/x402/payment-intents/" + firstPaymentIntentId + "/authorize", authBody, null);
 
-        mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
+        mockMvc.perform(post("/x402/payment-intents/{id}/authorize", secondPaymentIntentId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(authBody))
                 .andExpect(status().isBadRequest())
@@ -261,6 +262,59 @@ class READMEExamplesIntegrationTest {
                         .content(buildAuthRequestJson(999, futureDeadline(), randomNonce())))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("AUTHORIZATION_AMOUNT_MISMATCH"));
+    }
+
+    @Test
+    @DisplayName("A payment intent cannot be authorized twice")
+    void paymentIntentCannotBeAuthorizedTwice() throws Exception {
+        String paymentIntentId = createReadmeStyleIntent("readme-duplicate-auth-" + UUID.randomUUID());
+        String firstNonce = randomNonce();
+
+        postJson(
+                "/x402/payment-intents/" + paymentIntentId + "/authorize",
+                buildAuthRequestJson(1000, futureDeadline(), firstNonce),
+                null
+        );
+
+        mockMvc.perform(post("/x402/payment-intents/{id}/authorize", paymentIntentId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(buildAuthRequestJson(1000, futureDeadline(), randomNonce())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("PAYMENT_INTENT_ALREADY_AUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("A payment intent cannot be captured twice")
+    void paymentIntentCannotBeCapturedTwice() throws Exception {
+        String paymentIntentId = createReadmeStyleIntent("readme-duplicate-capture-" + UUID.randomUUID());
+
+        JsonNode authorization = postJson(
+                "/x402/payment-intents/" + paymentIntentId + "/authorize",
+                buildAuthRequestJson(1000, futureDeadline(), randomNonce()),
+                null
+        );
+
+        String authorizationId = authorization.get("id").asText();
+
+        postJson(
+                "/x402/payment-intents/" + paymentIntentId + "/capture",
+                """
+                {
+                  "authorizationId": "%s"
+                }
+                """.formatted(authorizationId),
+                null
+        );
+
+        mockMvc.perform(post("/x402/payment-intents/{id}/capture", paymentIntentId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "authorizationId": "%s"
+                                }
+                                """.formatted(authorizationId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("PAYMENT_INTENT_ALREADY_SETTLED"));
     }
 
     @Test

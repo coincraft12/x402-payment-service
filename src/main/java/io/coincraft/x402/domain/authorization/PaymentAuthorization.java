@@ -10,7 +10,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "x402_payment_authorizations",
         indexes = {
-                @Index(name = "idx_x402_auth_intent", columnList = "paymentIntentId"),
+                @Index(name = "idx_x402_auth_intent", columnList = "paymentIntentId", unique = true),
                 @Index(name = "idx_x402_auth_digest", columnList = "digest", unique = true),
                 @Index(name = "idx_x402_auth_payer_nonce", columnList = "payer,nonce", unique = true)
         })
