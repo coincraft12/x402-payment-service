@@ -41,19 +41,27 @@ public class X402ChallengeService {
     private String reportPayee;
 
     public PaymentIntent loadOrCreateChallengeIntent(String payer, String idempotencyKey) {
+        return loadOrCreateChallengeIntent(
+                payer, idempotencyKey,
+                reportMerchantId, reportEndpoint, reportAsset, reportAmount, reportPayee
+        );
+    }
+
+    public PaymentIntent loadOrCreateChallengeIntent(
+            String payer,
+            String idempotencyKey,
+            String merchantId,
+            String endpoint,
+            String asset,
+            long amount,
+            String payee
+    ) {
         if (payer == null || payer.isBlank()) {
             throw new X402InvalidRequestException("X-Payer header is required");
         }
         return paymentService.createOrGet(
                 idempotencyKey,
-                new CreatePaymentIntentRequest(
-                        reportMerchantId,
-                        reportEndpoint,
-                        reportAsset,
-                        reportAmount,
-                        payer,
-                        reportPayee
-                )
+                new CreatePaymentIntentRequest(merchantId, endpoint, asset, amount, payer, payee)
         );
     }
 

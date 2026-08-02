@@ -1,6 +1,6 @@
 # x402-payment-service
 
-x402 프로토콜 기반 결제 인가 서비스. EIP-3009 `transferWithAuthorization` 서명 검증, 정책 엔진, 원장, 감사 로그를 포함한다.
+x402 프로토콜 기반 결제 인가 서비스. EIP-3009 `transferWithAuthorization` 서명 검증, 정책 엔진, 원장, 감사 로그, 어노테이션 기반 API 게이팅을 포함한다.
 
 ---
 
@@ -12,6 +12,7 @@ x402 프로토콜 기반 결제 인가 서비스. EIP-3009 `transferWithAuthoriz
 | 2단계 | x402 표준 challenge 응답 (`accepts[]`, network, asset contract) | ✅ 완료 |
 | 3단계 | PostgreSQL 전환 (테스트는 H2 유지) | ✅ 완료 |
 | 4단계 | Facilitator 온체인 브로드캐스트 (`transferWithAuthorization` via web3j) | ✅ 완료 |
+| 5단계 | `@X402Pay` 어노테이션 기반 API 게이팅 (Spring AOP) | ✅ 완료 |
 
 ---
 
@@ -538,6 +539,100 @@ PI3_CAPTURED
     │
     ▼
 PI4_SETTLED
+```
+
+---
+
+## 5단계: `@X402Pay` 어노테이션 기반 API 게이팅
+
+어노테이션 하나로 모든 엔드포인트를 x402 결제 게이팅 처리할 수 있다.
+
+### 사용법
+
+```java
+@GetMapping("/api/premium-data")
+@X402Pay(amount = 1000, asset = "USDC", merchantId = "demo-merchant", payee = "merchant-vault")
+public ResponseEntity<?> getPremiumData(HttpServletRequest request) {
+    PaymentIntent intent = (PaymentIntent) request.getAttribute("x402.resolved.intent");
+    return ResponseEntity.ok(data);
+}
+```
+
+이게 전부다. 402 로직을 직접 작성할 필요 없다.
+
+### 동작 방식
+
+```
+요청
+  │
+  ▼
+X402PayAspect (@Around)
+  ├── 헤더에서 Idempotency-Key + X-Payer 추출
+  ├── PaymentIntent 조회 또는 생성
+  ├── 미결제 → X402PaymentRequiredException throw
+  │       └── X402GlobalExceptionHandler → HTTP 402 + challenge body + X-Payment-* 헤더
+  └── 결제 완료 → proceed() → 컨트롤러 메서드 실행
+```
+
+### `@X402Pay` 파라미터
+
+| 파라미터 | 타입 | 기본값 | 설명 |
+|---|---|---|---|
+| `amount` | `long` | 필수 | 결제 금액 (토큰 최소 단위, USDC: 1000 = $0.001) |
+| `asset` | `String` | `"USDC"` | 결제 자산 |
+| `merchantId` | `String` | 설정값 fallback | Merchant ID. 빈 문자열이면 `x402.challenge.report.merchant-id` 사용 |
+| `payee` | `String` | 설정값 fallback | 수취인 식별자. 빈 문자열이면 `x402.challenge.report.payee` 사용 |
+
+### 필수 요청 헤더
+
+| 헤더 | 설명 |
+|---|---|
+| `Idempotency-Key` | 클라이언트 생성 멱등성 키 |
+| `X-Payer` | 결제자 식별자 (지갑 주소 또는 클라이언트 ID) |
+
+### 호출자 플로우 (클라이언트 입장)
+
+`@X402Pay`가 붙은 엔드포인트를 호출할 때의 흐름:
+
+**Step 1 — 엔드포인트 호출 → 402 수신**
+
+```powershell
+try {
+  Invoke-RestMethod -Method GET `
+    -Uri "http://localhost:8081/api/premium-data" `
+    -Headers @{ "Idempotency-Key" = "my-key-001"; "X-Payer" = "0x91ff..." }
+} catch {
+  $reader    = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+  $challenge = $reader.ReadToEnd() | ConvertFrom-Json
+}
+$paymentIntentId = $challenge.paymentIntentId
+```
+
+**Step 2 — 서명 생성 및 Authorize**
+
+```powershell
+node sign_eip3009.js $paymentIntentId
+# 출력된 Invoke-RestMethod 커맨드 실행
+$authorizationId = $auth.id
+```
+
+**Step 3 — Capture (온체인 정산)**
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8081/x402/payment-intents/$paymentIntentId/capture" `
+  -ContentType "application/json" `
+  -Body (@{ authorizationId = $authorizationId } | ConvertTo-Json)
+# status: PS2_SETTLED, txHash: 0x...
+```
+
+**Step 4 — 동일 Idempotency-Key로 재요청 → 200 OK**
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "http://localhost:8081/api/premium-data" `
+  -Headers @{ "Idempotency-Key" = "my-key-001"; "X-Payer" = "0x91ff..." }
+# 200 OK — 보호 자원 반환
 ```
 
 ---

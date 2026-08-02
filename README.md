@@ -1,6 +1,6 @@
 # x402-payment-service
 
-A payment authorization service based on the x402 protocol. Includes EIP-3009 `transferWithAuthorization` signature verification, policy engine, ledger, and audit trail.
+A payment authorization service based on the x402 protocol. Includes EIP-3009 `transferWithAuthorization` signature verification, policy engine, ledger, audit trail, and annotation-based API gating.
 
 > [한국어 문서](README.ko.md)
 
@@ -14,6 +14,7 @@ A payment authorization service based on the x402 protocol. Includes EIP-3009 `t
 | Phase 2 | x402 standard challenge response (`accepts[]`, network, asset contract) | ✅ Done |
 | Phase 3 | PostgreSQL migration (H2 retained for tests) | ✅ Done |
 | Phase 4 | Facilitator on-chain broadcast (`transferWithAuthorization` via web3j) | ✅ Done |
+| Phase 5 | `@X402Pay` annotation-based API gating (Spring AOP) | ✅ Done |
 
 ---
 
@@ -539,6 +540,100 @@ PI3_CAPTURED
     │
     ▼
 PI4_SETTLED
+```
+
+---
+
+## Phase 5: `@X402Pay` Annotation-Based API Gating
+
+Gate any endpoint behind x402 payment with a single annotation.
+
+### Usage
+
+```java
+@GetMapping("/api/premium-data")
+@X402Pay(amount = 1000, asset = "USDC", merchantId = "demo-merchant", payee = "merchant-vault")
+public ResponseEntity<?> getPremiumData(HttpServletRequest request) {
+    PaymentIntent intent = (PaymentIntent) request.getAttribute("x402.resolved.intent");
+    return ResponseEntity.ok(data);
+}
+```
+
+That's it. No manual 402 logic needed.
+
+### How It Works
+
+```
+Request
+  │
+  ▼
+X402PayAspect (@Around)
+  ├── Extract Idempotency-Key + X-Payer from headers
+  ├── Load or create PaymentIntent
+  ├── Not paid → throw X402PaymentRequiredException
+  │       └── X402GlobalExceptionHandler → HTTP 402 + challenge body + X-Payment-* headers
+  └── Paid → proceed() → controller method executes
+```
+
+### `@X402Pay` Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `amount` | `long` | required | Payment amount in token base units (USDC: 1000 = $0.001) |
+| `asset` | `String` | `"USDC"` | Payment asset |
+| `merchantId` | `String` | config fallback | Merchant ID. Empty → uses `x402.challenge.report.merchant-id` |
+| `payee` | `String` | config fallback | Payee identifier. Empty → uses `x402.challenge.report.payee` |
+
+### Required Request Headers
+
+| Header | Description |
+|---|---|
+| `Idempotency-Key` | Client-generated idempotency key |
+| `X-Payer` | Payer identifier (wallet address or client ID) |
+
+### Caller Flow (Client Perspective)
+
+When a client calls an `@X402Pay`-protected endpoint, the flow is:
+
+**Step 1 — Hit the endpoint, receive 402**
+
+```powershell
+try {
+  Invoke-RestMethod -Method GET `
+    -Uri "http://localhost:8081/api/premium-data" `
+    -Headers @{ "Idempotency-Key" = "my-key-001"; "X-Payer" = "0x91ff..." }
+} catch {
+  $reader    = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+  $challenge = $reader.ReadToEnd() | ConvertFrom-Json
+}
+$paymentIntentId = $challenge.paymentIntentId
+```
+
+**Step 2 — Sign & Authorize**
+
+```powershell
+node sign_eip3009.js $paymentIntentId
+# Run the printed Invoke-RestMethod command
+$authorizationId = $auth.id
+```
+
+**Step 3 — Capture (on-chain settlement)**
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8081/x402/payment-intents/$paymentIntentId/capture" `
+  -ContentType "application/json" `
+  -Body (@{ authorizationId = $authorizationId } | ConvertTo-Json)
+# status: PS2_SETTLED, txHash: 0x...
+```
+
+**Step 4 — Re-request with same Idempotency-Key → 200 OK**
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "http://localhost:8081/api/premium-data" `
+  -Headers @{ "Idempotency-Key" = "my-key-001"; "X-Payer" = "0x91ff..." }
+# 200 OK — protected resource returned
 ```
 
 ---
